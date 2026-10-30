@@ -22,7 +22,7 @@ _G.AerisSessionTimestamp = os.time()
 -- Build tag. Executor sering nge-cache hasil game:HttpGet, jadi gampang ketipu:
 -- script kelihatan "udah di-update" padahal yang jalan masih versi lama. Tag ini
 -- muncul di notifikasi startup, jadi ketahuan versi mana yang beneran jalan.
-local AERIS_BUILD = "vd-2.7"
+local AERIS_BUILD = "vd-2.8"
 
 -- Helper: Get Safe GUI Parent (Executors / CoreGui / PlayerGui)
 local function GetGuiParent()
@@ -16983,6 +16983,7 @@ do
         visited = 0,
         zeroPass = 0,
         total = 0,
+        waitedMatch = false,
     }
 
     local probe = { running = false }
@@ -17165,6 +17166,15 @@ do
         return model.Parent == nil
     end
 
+    -- Sinyal match jalan: folder "Map" ada di workspace. Ini bukan tebakan -- script
+    -- ini udah pakai penanda yang sama di belasan tempat (scan map, refresh ESP, dll),
+    -- termasuk dipakai langsung sebagai boolean di salah satu bagian.
+    -- Sebelum match mulai Map belum ada, dan pas intermission Map-nya dilepas lagi --
+    -- jadi penanda ini otomatis nge-pause farm di dua kondisi itu.
+    local function matchActive()
+        return workspace:FindFirstChild("Map") ~= nil
+    end
+
     -- Coba picu pengambilan. urutannya sengaja: fireproximityprompt (kalau executor
     -- nyediain) lebih andal daripada InputHold manual, dan ClickDetector terakhir
     -- karena paling jarang dipakai game modern.
@@ -17212,9 +17222,46 @@ do
         farm.total = 0
         farm.taken = 0
         farm.visited = 0
+        farm.waitedMatch = false
 
         task.spawn(function()
             while farm.running and _G.Ox.ScriptAlive do
+                -- Gating match: kalau "Tunggu Match Mulai" nyala dan Map belum ada
+                -- (lobby / intermission), jangan TP ke mana-mana -- cukup tunggu.
+                -- Daftar target ikut di-reset biar begitu Map muncul, urutannya
+                -- dihitung ulang dari posisi terkini, bukan sisa putaran lama.
+                if _G.Ox.PumpkinWaitMatch ~= false and not matchActive() then
+                    if not farm.waitedMatch then
+                        farm.waitedMatch = true
+                        lib:Notify({
+                            Title = "Pumpkin Farm",
+                            Description = "Nunggu match mulai -- farm jalan sendiri begitu Map ke-load",
+                            Duration = 5,
+                        })
+                    end
+
+                    farm.list = {}
+                    farm.index = 1
+
+                    for _ = 1, 10 do
+                        if not farm.running then return end
+                        task.wait(0.2)
+                    end
+                    continue
+                end
+
+                -- Transisi nunggu -> match jalan. Dikasih tau sekali aja, sisanya
+                -- biar putaran berikutnya yang bangun daftar target.
+                if farm.waitedMatch and matchActive() then
+                    farm.waitedMatch = false
+
+                    lib:Notify({
+                        Title = "Pumpkin Farm",
+                        Description = "Match mulai -- farm jalan",
+                        Duration = 3,
+                    })
+                end
+
                 if farm.index > #farm.list then
                     farm.list = buildList()
                     farm.index = 1
@@ -17322,6 +17369,21 @@ do
     farmSection:AddSlider("Touch Offset", 0, 5, 0.5, function(studs)
         _G.Ox.PumpkinTouchOffset = studs
     end, { Increment = 0.1, Flag = "PumpkinTouchOffset" })
+
+    -- Default ON: begitu diaktifin, farm-nya nunggu sampai match beneran jalan
+    -- (folder Map ke-load) baru mulai TP. Di lobby / intermission dia cuma diam.
+    farmSection:AddToggle("Tunggu Match Mulai", true, function(on)
+        _G.Ox.PumpkinWaitMatch = on == true
+        farm.waitedMatch = false
+
+        lib:Notify({
+            Title = "Pumpkin Farm",
+            Description = on
+                and "ON -- farm baru jalan setelah Map ke-load"
+                or "OFF -- farm jalan langsung, walau belum masuk match",
+            Duration = 3,
+        })
+    end, { Flag = "PumpkinWaitMatch" })
 
     -- Default ON: pumpkin diambil lewat tombol aksi, bukan cuma kesenggol. Tombolnya
     -- serbaguna, jadi kalau lagi nempel jendela/pallet kadang yang kepicu vault --
