@@ -22,7 +22,7 @@ _G.AerisSessionTimestamp = os.time()
 -- Build tag. Executor sering nge-cache hasil game:HttpGet, jadi gampang ketipu:
 -- script kelihatan "udah di-update" padahal yang jalan masih versi lama. Tag ini
 -- muncul di notifikasi startup, jadi ketahuan versi mana yang beneran jalan.
-local AERIS_BUILD = "vd-2.1"
+local AERIS_BUILD = "vd-2.2"
 
 -- Helper: Get Safe GUI Parent (Executors / CoreGui / PlayerGui)
 local function GetGuiParent()
@@ -4667,6 +4667,25 @@ do
             return "Survivor"
         end
         return "Spectator"
+    end
+
+    -- Semua tombol diagnostik nulis ke sini. Di HP nggak ada console F9, jadi hasilnya
+    -- digandakan ke clipboard -- tinggal paste ke chat, nggak perlu ngoprek log executor.
+    -- setclipboard itu API executor, jadi dicek dulu; kalau nggak ada, ya console doang.
+    DumpReport = function(title, lines)
+        local text = title .. "\n" .. table.concat(lines, "\n")
+
+        print("[Aeris Hub] " .. title)
+        for _, line in ipairs(lines) do
+            print("  " .. line)
+        end
+
+        if type(setclipboard) == "function" then
+            local ok = pcall(function() setclipboard(text) end)
+            if ok then return true end
+        end
+
+        return false
     end
 
     GetDistance = function(arg)
@@ -16901,7 +16920,7 @@ MapCard:AddButton("Scan Pumpkin (Console)", function()
     ScanMapESP(true)
 
     local total = #tbl4.Pumpkins
-    print("[Aeris Hub] Kandidat Pumpkin ESP: " .. total)
+    local lines = {}
 
     for i, obj in ipairs(tbl4.Pumpkins) do
         local part = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
@@ -16911,18 +16930,20 @@ MapCard:AddButton("Scan Pumpkin (Console)", function()
             jarak = string.format(" @ %.0f studs", (workspace.CurrentCamera.CFrame.Position - part.Position).Magnitude)
         end
 
-        print(string.format("  %d. %s (%s)%s", i, obj:GetFullName(), obj.ClassName, jarak))
+        table.insert(lines, string.format("%d. %s (%s)%s", i, obj:GetFullName(), obj.ClassName, jarak))
     end
 
     if total == 0 then
-        print("  (kosong) Kalau di game ada pumpkin tapi daftar ini kosong, berarti nama" ..
-              " instance-nya beda -- kirim isi console ini biar pencocokannya diperbaiki.")
+        table.insert(lines, "(kosong) Kalau di game ada pumpkin tapi daftar ini kosong," ..
+                            " berarti nama instance-nya beda -- kirim ini ke chat.")
     end
+
+    local copied = DumpReport(string.format("Kandidat Pumpkin ESP: %d", total), lines)
 
     lib:Notify({
         Title = "Pumpkin",
-        Description = string.format("%d kandidat di-dump ke console (F9)", total),
-        Duration = 3,
+        Description = copied and "Di-copy ke clipboard -- tinggal paste" or "Di-dump ke console",
+        Duration = 3.5,
     })
 end)
 
@@ -17084,25 +17105,24 @@ do
         lib:Notify({ Title = "Pumpkin Farm", Description = "Dihentikan", Duration = 1.5 })
     end)
 
-    farmSection:AddButton("Probe Pumpkin (Console)", function()
+    farmSection:AddButton("Probe Pumpkin (Copy)", function()
         fn2(true)
 
         local total = #tbl4.Pumpkins
-        print("[Aeris Hub] ===== PROBE PUMPKIN =====")
-        print("kandidat objek: " .. total)
+        local lines = { "kandidat objek: " .. total }
 
         for i, obj in ipairs(tbl4.Pumpkins) do
             local part = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
-            print(string.format("%d. %s (%s) part=%s", i, obj:GetFullName(), obj.ClassName, tostring(part ~= nil)))
+            table.insert(lines, string.format("%d. %s (%s) part=%s", i, obj:GetFullName(), obj.ClassName, tostring(part ~= nil)))
 
             local prompt = obj:FindFirstChildWhichIsA("ProximityPrompt", true)
             local click = obj:FindFirstChildWhichIsA("ClickDetector", true)
-            print(string.format("   ProximityPrompt=%s  ClickDetector=%s", tostring(prompt ~= nil), tostring(click ~= nil)))
+            table.insert(lines, string.format("   ProximityPrompt=%s  ClickDetector=%s", tostring(prompt ~= nil), tostring(click ~= nil)))
 
             for _, attr in ipairs({ "action", "special", "EquippedItem" }) do
                 local v = obj:GetAttribute(attr)
                 if v ~= nil then
-                    print(string.format("   atribut %s = %s", attr, tostring(v)))
+                    table.insert(lines, string.format("   atribut %s = %s", attr, tostring(v)))
                 end
             end
         end
@@ -17113,17 +17133,20 @@ do
         local ci = char and char:FindFirstChild("CheckInterractable")
 
         if ci then
-            print("CheckInterractable atribut (posisi sekarang):")
+            table.insert(lines, "CheckInterractable atribut (posisi sekarang):")
             for k, v in pairs(ci:GetAttributes()) do
-                print(string.format("   %s = %s", k, tostring(v)))
+                table.insert(lines, string.format("   %s = %s", k, tostring(v)))
             end
+        else
+            table.insert(lines, "CheckInterractable: TIDAK ADA di character")
         end
 
-        print("==================================")
+        local copied = DumpReport("PROBE PUMPKIN", lines)
+
         lib:Notify({
             Title = "Probe Pumpkin",
-            Description = "Hasilnya di console (F9) -- kirim ke aku",
-            Duration = 4,
+            Description = copied and "Di-copy ke clipboard -- paste ke chat" or "Di-dump ke console",
+            Duration = 5,
         })
     end)
 end
@@ -17459,14 +17482,16 @@ do
             return
         end
 
-        print("[Aeris Hub] Daftar generator, terurut dari terdekat:")
+        local lines = {}
         for i, item in ipairs(list) do
-            print(string.format("  %d. %.0f studs  posisi %s", i, item.dist, tostring(item.part.Position)))
+            table.insert(lines, string.format("%d. %.0f studs  posisi %s", i, item.dist, tostring(item.part.Position)))
         end
+
+        local copied = DumpReport(string.format("Daftar generator (%d), terurut dari terdekat:", #list), lines)
 
         lib:Notify({
             Title = "Generator",
-            Description = string.format("%d generator di-dump ke console (F9)", #list),
+            Description = copied and "Di-copy ke clipboard -- tinggal paste" or "Di-dump ke console",
             Duration = 2.5,
         })
     end)
