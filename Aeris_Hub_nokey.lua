@@ -48,120 +48,8 @@ local function CopyToClipboard(str)
     return false
 end
 
--- Splash Screen (6 seconds duration, white background covering top bar & chat, centered logo + text)
-local function ShowSplashScreen()
-    local guiParent = GetGuiParent()
-
-    local splashGui = Instance.new("ScreenGui")
-    splashGui.Name = "Aeris_SplashScreen"
-    splashGui.IgnoreGuiInset = true
-    splashGui.DisplayOrder = 999999
-    splashGui.ResetOnSpawn = false
-    splashGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-
-    -- Pure white background covering the entire viewport including Roblox top bar and chat
-    local bg = Instance.new("Frame")
-    bg.Name = "Background"
-    bg.Size = UDim2.new(1, 0, 1, 0)
-    bg.Position = UDim2.new(0, 0, 0, 0)
-    bg.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-    bg.BackgroundTransparency = 1
-    bg.BorderSizePixel = 0
-    bg.ZIndex = 999999
-    bg.Parent = splashGui
-
-    -- Centered container
-    local centerContainer = Instance.new("Frame")
-    centerContainer.Name = "CenterContainer"
-    centerContainer.AnchorPoint = Vector2.new(0.5, 0.5)
-    centerContainer.Position = UDim2.new(0.5, 0, 0.48, 0)
-    centerContainer.Size = UDim2.new(0.9, 0, 0.9, 0)
-    centerContainer.BackgroundTransparency = 1
-    centerContainer.BorderSizePixel = 0
-    centerContainer.ZIndex = 1000000
-    centerContainer.Parent = bg
-
-    local uiList = Instance.new("UIListLayout")
-    uiList.FillDirection = Enum.FillDirection.Vertical
-    uiList.HorizontalAlignment = Enum.HorizontalAlignment.Center
-    uiList.VerticalAlignment = Enum.VerticalAlignment.Center
-    uiList.Padding = UDim.new(0, 16)
-    uiList.SortOrder = Enum.SortOrder.LayoutOrder
-    uiList.Parent = centerContainer
-
-    -- Prominent logo
-    local logo = Instance.new("ImageLabel")
-    logo.Name = "Logo"
-    logo.Image = "rbxassetid://94398897297532"
-    logo.BackgroundTransparency = 1
-    logo.ImageTransparency = 1
-    logo.Size = UDim2.new(0.38, 0, 0.46, 0)
-    logo.ScaleType = Enum.ScaleType.Fit
-    logo.ZIndex = 1000001
-    logo.LayoutOrder = 1
-    logo.Parent = centerContainer
-
-    local aspect = Instance.new("UIAspectRatioConstraint")
-    aspect.AspectRatio = 1
-    aspect.Parent = logo
-
-    -- Brand Title: Aeris.
-    local titleLabel = Instance.new("TextLabel")
-    titleLabel.Name = "Title"
-    titleLabel.Text = "Aeris."
-    titleLabel.Font = Enum.Font.GothamBold
-    titleLabel.TextSize = 50
-    titleLabel.TextColor3 = Color3.fromRGB(22, 16, 34)
-    titleLabel.TextTransparency = 1
-    titleLabel.BackgroundTransparency = 1
-    titleLabel.Size = UDim2.new(1, 0, 0, 56)
-    titleLabel.ZIndex = 1000001
-    titleLabel.LayoutOrder = 2
-    titleLabel.Parent = centerContainer
-
-    -- Brand Subtitle: All for you
-    local subLabel = Instance.new("TextLabel")
-    subLabel.Name = "Subtitle"
-    subLabel.Text = "All for you"
-    subLabel.Font = Enum.Font.GothamMedium
-    subLabel.TextSize = 26
-    subLabel.TextColor3 = Color3.fromRGB(120, 85, 175)
-    subLabel.TextTransparency = 1
-    subLabel.BackgroundTransparency = 1
-    subLabel.Size = UDim2.new(1, 0, 0, 32)
-    subLabel.ZIndex = 1000001
-    subLabel.LayoutOrder = 3
-    subLabel.Parent = centerContainer
-
-    splashGui.Parent = guiParent
-
-    local tweenInfoIn = TweenInfo.new(1.0, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-    local tweenInfoOut = TweenInfo.new(1.0, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
-
-    local function TweenAll(targetTransparency, info)
-        local t1 = TweenService:Create(bg, info, { BackgroundTransparency = targetTransparency })
-        local t2 = TweenService:Create(logo, info, { ImageTransparency = targetTransparency })
-        local t3 = TweenService:Create(titleLabel, info, { TextTransparency = targetTransparency })
-        local t4 = TweenService:Create(subLabel, info, { TextTransparency = targetTransparency })
-        t1:Play()
-        t2:Play()
-        t3:Play()
-        t4:Play()
-        return t1
-    end
-
-    -- 1.0s Fade In -> 4.0s Hold -> 1.0s Fade Out (~6 seconds total)
-    local inTween = TweenAll(0, tweenInfoIn)
-    inTween.Completed:Wait()
-    task.wait(4.0)
-    local outTween = TweenAll(1, tweenInfoOut)
-    outTween.Completed:Wait()
-
-    splashGui:Destroy()
-end
-
--- Startup: splash screen (key verification dihapus, langsung jalan)
-ShowSplashScreen()
+-- Splash screen (logo Aeris + animasi 6 detik) DIHAPUS: script langsung
+-- masuk ke menu, nggak ada layar putih + logo yang nutupin layar.
 
 -- =======================================================
 --                 AERIS CUSTOM UI ENGINE
@@ -373,6 +261,9 @@ local function CreateAerisLibrary()
     watermarkFrame.BackgroundTransparency = 0.25
     watermarkFrame.BorderSizePixel = 0
     watermarkFrame.Parent = watermarkGui
+    -- Default OFF: badge "Aeris" nggak nempel di layar. Bisa dinyalain lagi
+    -- dari Settings > UI Config > Watermark.
+    watermarkFrame.Visible = false
 
     local wmCorner = Instance.new("UICorner")
     wmCorner.CornerRadius = UDim.new(0, 8)
@@ -2480,7 +2371,7 @@ do
         SphereWords = "Aeris",
         SphereImage = "rbxassetid://94398897297532",
         SphereIconSize = 38,
-        Watermark = true,
+        Watermark = false,
         WatermarkText = "Aeris",
         WatermarkIcon = "rbxassetid://94398897297532",
     })
@@ -16831,7 +16722,7 @@ AppearanceCard:AddToggle("Lock GUI", false, function(arg)
     v:SetLocked(arg)
 end, {Flag = "LockGui"})
 
-AppearanceCard:AddToggle("Watermark", true, function(arg)
+AppearanceCard:AddToggle("Watermark", false, function(arg)
     lib:SetWatermark({Enabled = arg})
 end, {Flag = "Watermark"})
 

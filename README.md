@@ -55,6 +55,16 @@ Angka measured di test harness:
 - HP 812x375 → scale 0.694 (479x326 px)
 - HP kecil 480x260 → scale 0.481 (332x226 px)
 
+
+## Branding
+
+- **Splash screen dihapus** — layar putih + logo "Aeris. / All for you" yang muncul 6 detik
+  (1s fade in → 4s hold → 1s fade out) sudah dibuang total. Script langsung masuk ke menu,
+  dan startup jadi ~6 detik lebih cepat.
+- **Watermark default OFF** — badge "Aeris" di kiri atas nggak nempel lagi. Mau dinyalain?
+  Settings → UI Config → Watermark.
+- Yang masih ada: logo + judul "Aeris Hub" di header window.
+
 ## Catatan
 
 - Fast Bandage masih memanggil `script.panduhub.com/BoostBandage.lua` (fitur lain tidak butuh internet).
