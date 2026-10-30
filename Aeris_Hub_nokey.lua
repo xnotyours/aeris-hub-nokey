@@ -22,7 +22,7 @@ _G.AerisSessionTimestamp = os.time()
 -- Build tag. Executor sering nge-cache hasil game:HttpGet, jadi gampang ketipu:
 -- script kelihatan "udah di-update" padahal yang jalan masih versi lama. Tag ini
 -- muncul di notifikasi startup, jadi ketahuan versi mana yang beneran jalan.
-local AERIS_BUILD = "vd-1.9"
+local AERIS_BUILD = "vd-2.0"
 
 -- Helper: Get Safe GUI Parent (Executors / CoreGui / PlayerGui)
 local function GetGuiParent()
@@ -4622,6 +4622,7 @@ do
         Gate = false,
         Window = false,
         SCP = false,
+        Pumpkin = false,
         HookCount = false,
         Status = false,
         MaxDistance = 1000,
@@ -4637,6 +4638,7 @@ do
         Gate = Color3.fromRGB(255, 255, 255),
         Window = Color3.fromRGB(60, 255, 255),
         SCP = Color3.fromRGB(255, 0, 255),
+        Pumpkin = Color3.fromRGB(255, 140, 0),
         Injured = Color3.fromRGB(255, 140, 0),
         Downed = Color3.fromRGB(255, 40, 40),
         Hooked = Color3.fromRGB(240, 240, 255),
@@ -4649,6 +4651,7 @@ do
         Hooks = {},
         Gates = {},
         SCPs = {},
+        Pumpkins = {},
     }
 
     GetRole = function()
@@ -5105,6 +5108,7 @@ do
         table.clear(tbl4.Hooks)
         table.clear(tbl4.Gates)
         table.clear(tbl4.SCPs)
+        table.clear(tbl4.Pumpkins)
         local map = workspace:FindFirstChild("Map")
         local v4 = map or workspace
         local descendants = v4:GetDescendants()
@@ -5155,6 +5159,12 @@ do
 
             if v5:IsA("Model") and string.match(string.lower(v5.Name), "^scp") and not table.find(tbl4.SCPs, v5) then
                 table.insert(tbl4.SCPs, v5)
+            elseif v5:IsA("Model") and string.find(string.lower(v5.Name), "pumpkin", 1, true) and not table.find(tbl4.Pumpkins, v5) then
+                -- Nama instance pumpkin nggak bisa dipastiin tanpa masuk ke game: toggle
+                -- "Pumpkin ESP" di hub pembanding ternyata nggak pernah dibaca sama logika
+                -- ESP-nya (cuma nulis flag, nggak ada yang baca). Jadi di sini dipakai
+                -- pencocokan longgar: nama apa pun yang mengandung "pumpkin".
+                table.insert(tbl4.Pumpkins, v5)
             end
         end
     end
@@ -5589,6 +5599,7 @@ do
             task.wait(0.1)
             UpdatePlayerESP()
             UpdateSCPESP()
+            UpdatePumpkinESP()
             UpdateStaticESP()
         end
     end
@@ -5609,6 +5620,7 @@ do
                 task.wait(0.2)
                 UpdatePlayerESP()
                 UpdateSCPESP()
+                UpdatePumpkinESP()
                 UpdateStaticESP()
             end)
         end
@@ -5622,6 +5634,7 @@ do
             if _G.Ox.ESPConfig.Master then
                 pcall(UpdatePlayerESP)
                 pcall(UpdateSCPESP)
+                pcall(UpdatePumpkinESP)
                 pcall(UpdateStaticESP)
             end
 
@@ -5651,6 +5664,7 @@ do
                     pcall(UpdateStaticESP)
                     pcall(UpdatePlayerESP)
                     pcall(UpdateSCPESP)
+                    pcall(UpdatePumpkinESP)
                 end
             end
         end
@@ -8563,6 +8577,7 @@ do
             n = tick()
             UpdatePlayerESP()
             UpdateSCPESP()
+            UpdatePumpkinESP()
             UpdateStaticESP()
         end
     end)
@@ -9743,6 +9758,12 @@ do
                     scP.SCPEH:Destroy()
                 end
             end
+        elseif arg == "Pumpkin" then
+            for k, pumpkin in pairs(tbl4.Pumpkins) do
+                if pumpkin and pumpkin.Parent and pumpkin:FindFirstChild("PKEH") then
+                    pumpkin.PKEH:Destroy()
+                end
+            end
         end
     end
 
@@ -9754,6 +9775,7 @@ do
         ClearESP("Hook")
         ClearESP("Gate")
         ClearESP("SCP")
+        ClearESP("Pumpkin")
         ClearESP("Window")
         ClearHookESP()
     end
@@ -10121,6 +10143,52 @@ do
             end
         else
             ClearESP("SCP")
+        end
+    end
+
+    -- Pumpkin itu prop, bukan NPC: nggak punya Humanoid kayak SCP, jadi syarat
+    -- health/walkspeed-nya sengaja nggak dipakai — cukup ada BasePart.
+    UpdatePumpkinESP = function()
+        if not _G.Ox.ESPConfig.Master then
+            return
+        end
+
+        if _G.Ox.ESPConfig.Pumpkin then
+            for i, pumpkin in ipairs(tbl4.Pumpkins) do
+                if pumpkin and pumpkin.Parent then
+                    local basePart = pumpkin.PrimaryPart or pumpkin:FindFirstChildWhichIsA("BasePart")
+                    local existing = pumpkin:FindFirstChild("PKEH")
+
+                    if not basePart then
+                        if existing then
+                            existing:Destroy()
+                        end
+                    elseif _G.Ox.ESPConfig.MaxDistance < (currentCamera.CFrame.Position - basePart.Position).Magnitude then
+                        if existing then
+                            existing:Destroy()
+                        end
+                    else
+                        local color = _G.Ox.ESPColors.Pumpkin
+                        local v5 = existing
+
+                        if not existing then
+                            local highlight2 = Instance.new("Highlight")
+                            v5 = highlight2
+                            highlight2.Name = "PKEH"
+                            highlight2.Parent = pumpkin
+                        end
+
+                        v5.FillColor = color
+                        v5.OutlineColor = color
+                        local outline = _G.Ox.ESPConfig.Outline
+                        local fillTransparency = outline and 1 or 0.5
+                        v5.FillTransparency = fillTransparency
+                        v5.OutlineTransparency = 0
+                    end
+                end
+            end
+        else
+            ClearESP("Pumpkin")
         end
     end
 
@@ -16793,6 +16861,65 @@ SCPToggle:AddColorPicker(_G.Ox.ESPColors.SCP, {
         end
     end,
 })
+
+local pumpkinToggle = MapCard:AddCheckbox("Pumpkin ESP", false, function(on)
+    _G.Ox.ESPConfig.Pumpkin = on
+
+    if _G.Ox.ESPConfig.Master then
+        if on then
+            -- dipaksa (arg true) biar lewatin debounce fn2: kalau nggak, cache bisa belum
+            -- punya pumpkin sama sekali dan toggle-nya kelihatan nggak ngefek
+            ScanMapESP(true)
+            UpdatePumpkinESP()
+        else
+            ClearESP("Pumpkin")
+        end
+    end
+end, {Flag = "EspPumpkin"})
+
+pumpkinToggle:AddColorPicker(_G.Ox.ESPColors.Pumpkin, {
+    Flag = "PumpkinEsp_Color",
+    Title = "Pumpkin Color",
+    Callback = function(color)
+        _G.Ox.ESPColors.Pumpkin = color
+
+        if _G.Ox.ESPConfig.Master then
+            UpdatePumpkinESP()
+        end
+    end,
+})
+
+-- Diagnosa: karena nama instance pumpkin nggak bisa diverifikasi dari luar game,
+-- tombol ini nunjukin APA yang beneran ke-match, supaya pencocokannya bisa dibenerin
+-- tanpa nebak-nebak.
+MapCard:AddButton("Scan Pumpkin (Console)", function()
+    ScanMapESP(true)
+
+    local total = #tbl4.Pumpkins
+    print("[Aeris Hub] Kandidat Pumpkin ESP: " .. total)
+
+    for i, obj in ipairs(tbl4.Pumpkins) do
+        local part = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
+        local jarak = ""
+
+        if part then
+            jarak = string.format(" @ %.0f studs", (workspace.CurrentCamera.CFrame.Position - part.Position).Magnitude)
+        end
+
+        print(string.format("  %d. %s (%s)%s", i, obj:GetFullName(), obj.ClassName, jarak))
+    end
+
+    if total == 0 then
+        print("  (kosong) Kalau di game ada pumpkin tapi daftar ini kosong, berarti nama" ..
+              " instance-nya beda -- kirim isi console ini biar pencocokannya diperbaiki.")
+    end
+
+    lib:Notify({
+        Title = "Pumpkin",
+        Description = string.format("%d kandidat di-dump ke console (F9)", total),
+        Duration = 3,
+    })
+end)
 
 MapCard:AddButton("Refresh Map", function()
     ForceRefreshMap()
