@@ -381,10 +381,13 @@ local function CreateAerisLibrary()
         local DESIGN_W, DESIGN_H = 690, 470 -- ukuran asli window (px desain)
 
         function lib:ApplyUIScale()
-            -- Skala = zoom pilihan user (default 120% di HP, 100% di PC). Auto-fit
-            -- cuma boleh MENGECIL: kalau zoom-nya nggak muat di layar (HP kecil),
-            -- diturunin sampai muat — jadi window nggak pernah lewat bibir layar.
-            local scale = lib.UserScale or 1
+            -- Dua angka ini DIKALI, jangan pernah ditukar jadi math.min():
+            --   fit       = skala dasar biar window muat layar (auto-fit, maks 100%)
+            --   UserScale = zoom pilihan user (default 120%), dikali di atas fit
+            -- Sempat ditulis math.min(UserScale, fit) dan itu bikin slider UI Scale
+            -- MATI di layar kecil: kalau fit = 0.52, semua nilai slider di atas 52%
+            -- langsung dipotong balik ke 0.52 — angkanya berubah tapi window-nya nggak.
+            local fit = 1
             if lib.AutoFitHP then
                 local camScale = workspace.CurrentCamera
                 local vp = (camScale and camScale.ViewportSize) or Vector2.new(1280, 720)
@@ -396,12 +399,15 @@ local function CreateAerisLibrary()
                     availX = math.max(160, vp.X - inset.X * 2)
                     availY = math.max(120, vp.Y - inset.Y * 2)
                 end)
-                -- Batas keras: window boleh makan maks 95% lebar & 92% tinggi area
-                -- yang kepake, jadi selalu ada margin buat narik header-nya.
-                local fitLimit = math.min((availX * 0.95) / DESIGN_W, (availY * 0.92) / DESIGN_H)
-                scale = math.min(scale, fitLimit)
+                -- Window boleh makan maks 95% lebar & 92% tinggi area kepake. Fit cuma
+                -- bisa ngecil (max 1): layar gede nggak bikin window auto-membengkak,
+                -- pembesaran tetap keputusan user lewat slider UI Scale.
+                fit = math.min(1, (availX * 0.95) / DESIGN_W, (availY * 0.92) / DESIGN_H)
             end
-            uiScale.Scale = math.clamp(scale, 0.30, 1.6)
+            -- Sengaja TANPA cap tambahan dari fit: kalau slider dinaikin sampai window
+            -- lewat layar, itu pilihan user. Posisinya tetap ditahan keepOnScreen()
+            -- supaya header-nya nggak pernah kabur keluar layar.
+            uiScale.Scale = math.clamp(fit * (lib.UserScale or 1), 0.30, 1.6)
             -- Skala berubah = ukuran window di layar berubah, jadi window yang tadinya
             -- pas bisa jadi udah lewat bibir layar. Clamp ulang posisinya (helper-nya
             -- didefinisiin di bawah, makanya dicek dulu biar aman saat load awal).
