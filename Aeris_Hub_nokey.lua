@@ -792,22 +792,63 @@ local function CreateAerisLibrary()
         }
 
         local originalSize = mainFrame.Size
-        minBtn.MouseButton1Click:Connect(function()
-            window.IsMinimized = not window.IsMinimized
+
+        -- ===== MINIMIZE MODE: pill kompak =====
+        -- Dulu minimize cuma ngecilin TINGGI-nya doang, jadi hasilnya bar 690x52
+        -- yang tetap selebar window -> di HP nutupin sepertiga atas layar. Sekarang
+        -- lebarnya ikut dikecilin jadi pill kompak, posisi dipertahankan (di-clamp
+        -- biar tetap kejangkau), dan bisa di-tap dua kali buat balik ke window penuh.
+        local MINI_W, MINI_H = 250, 52 -- ukuran pill saat minimize (px desain)
+        local restoreSize = originalSize -- ukuran terakhir sebelum minimize
+        local restorePos = nil
+
+        local function applyMinimized(minimized)
+            window.IsMinimized = minimized == true
             if window.IsMinimized then
-                TweenService:Create(mainFrame, TweenInfo.new(0.3, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
-                    Size = UDim2.new(originalSize.X.Scale, originalSize.X.Offset, 0, 52)
+                restoreSize = mainFrame.Size
+                restorePos = mainFrame.Position
+                TweenService:Create(mainFrame, TweenInfo.new(0.28, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
+                    Size = UDim2.new(0, MINI_W, 0, MINI_H),
+                    BackgroundTransparency = 0.30
                 }):Play()
                 sidebar.Visible = false
                 contentArea.Visible = false
+                resizeGrip.Visible = false
                 minBtn.Text = "+"
             else
-                TweenService:Create(mainFrame, TweenInfo.new(0.3, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
-                    Size = originalSize
+                TweenService:Create(mainFrame, TweenInfo.new(0.28, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
+                    Size = restoreSize,
+                    BackgroundTransparency = 0.20
                 }):Play()
                 sidebar.Visible = true
                 contentArea.Visible = true
+                resizeGrip.Visible = not winLocked
                 minBtn.Text = "-"
+                if restorePos then mainFrame.Position = restorePos end
+            end
+            -- Ukuran berubah = tepi window bisa lewat bibir layar. Tween butuh waktu,
+            -- jadi clamp-nya ditunda sampai animasinya kelar.
+            task.delay(0.32, function()
+                pcall(function() keepOnScreen(mainFrame) end)
+            end)
+        end
+
+        minBtn.MouseButton1Click:Connect(function()
+            applyMinimized(not window.IsMinimized)
+        end)
+
+        -- Tap dua kali di header = toggle minimize. Di HP nggak ada hover, jadi ini
+        -- jalan pintas selain nyari tombol +/- yang kecil.
+        local lastHeaderTap = 0
+        header.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                local now = tick()
+                if now - lastHeaderTap < 0.35 then
+                    lastHeaderTap = 0
+                    applyMinimized(not window.IsMinimized)
+                else
+                    lastHeaderTap = now
+                end
             end
         end)
 
@@ -959,9 +1000,10 @@ local function CreateAerisLibrary()
         function window:ResetWindowSize()
             local target = originalSize
             if window.IsMinimized then
-                target = UDim2.new(originalSize.X.Scale, originalSize.X.Offset, 0, 52)
+                target = UDim2.new(0, MINI_W, 0, MINI_H)
             end
             mainFrame.Size = target
+            restoreSize = originalSize
             keepOnScreen(mainFrame)
         end
 

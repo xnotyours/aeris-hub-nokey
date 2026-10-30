@@ -4,7 +4,7 @@ Versi **tanpa key system** dari Aeris Hub VD. Key check (menu verifikasi, `REQUI
 file `Aeris/key_<userId>.json`, badge "Aeris Verified", countdown key di sidebar) sudah dibuang
 total — script langsung jalan begitu di-execute.
 
-- File: `Aeris_Hub_nokey.lua` (17.011 baris)
+- File: `Aeris_Hub_nokey.lua` (17.160 baris)
 - Platform: Roblox executor (butuh `require`, `firesignal`, `gethui`, `writefile`/`readfile` opsional)
 - Place: [BUTCHER] Violence District (PlaceId `93978595733734`)
 - UI: engine sendiri (nggak HttpGet library luar)
@@ -82,6 +82,24 @@ script. Sekarang:
 Catatan teknis: offset `Position` yang di-skala `UIScale` itu ambigu di Roblox, jadi clamp-nya
 nggak nebak — dia geser, ukur hasil aslinya, terus koreksi sisa error pakai faktor hasil ukur.
 Diuji di harness 2 semantik (offset di-skala / 1:1), dua-duanya lolos.
+
+
+## Minimize jadi pill kompak
+
+Minimize dulu cuma ngecilin tinggi window jadi 52 px, tapi lebarnya tetap ikut window
+(690 px desain) — di HP itu jadi bar lebar yang nutupin sepertiga atas layar. Sekarang
+minimize bikin window jadi pill kompak:
+
+- **Lebar ikut mengecil** — 250x52 px (desain) saat minimize, bukan lagi selebar window.
+- **Posisi dipertahankan** — pill muncul di tempat window terakhir ditaruh (tetap
+  di-clamp biar kejangkau), jadi nggak lompat sendiri ke pojok.
+- **Tap dua kali di header** buat toggle minimize/expand. Di HP nggak ada hover, jadi ini
+  jalan pintas selain nyari tombol `+`/`-` yang kecil.
+- **Expand balikin utuh** — ukuran terakhir sebelum minimize (termasuk kalau sebelumnya
+  udah di-resize) plus posisi asalnya.
+- **Resize grip disembunyiin** pas minimize — percuma bisa resize waktu lagi kecil.
+- **Reset Ukuran Window** sekarang balikin state minimize ke pill kompak juga (dulu tetap
+  balik ke bar lebar).
 
 
 ## Branding
