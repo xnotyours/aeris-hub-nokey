@@ -22,7 +22,7 @@ _G.AerisSessionTimestamp = os.time()
 -- Build tag. Executor sering nge-cache hasil game:HttpGet, jadi gampang ketipu:
 -- script kelihatan "udah di-update" padahal yang jalan masih versi lama. Tag ini
 -- muncul di notifikasi startup, jadi ketahuan versi mana yang beneran jalan.
-local AERIS_BUILD = "vd-2.2"
+local AERIS_BUILD = "vd-2.3"
 
 -- Helper: Get Safe GUI Parent (Executors / CoreGui / PlayerGui)
 local function GetGuiParent()
@@ -16968,6 +16968,8 @@ do
         emptyPass = 0,
     }
 
+    local probe = { running = false }
+
     local function characterRoot()
         local char = localPlayer and localPlayer.Character
         return char and char:FindFirstChild("HumanoidRootPart")
@@ -17105,49 +17107,104 @@ do
         lib:Notify({ Title = "Pumpkin Farm", Description = "Dihentikan", Duration = 1.5 })
     end)
 
+    -- Probe ini PEREKAM, bukan jepretan sekali. Alasannya: yang perlu diketahu cuma bisa
+    -- keliatan PAS kamu lagi interaksi sama pumpkin-nya, dan itu nggak bisa barengan
+    -- kalau tombolnya cuma nyomot sesaat. Jadi: pencet dulu, baru interaksi.
     farmSection:AddButton("Probe Pumpkin (Copy)", function()
-        fn2(true)
+        if probe.running then
+            lib:Notify({ Title = "Probe", Description = "Lagi merekam, tunggu bentar", Duration = 2 })
+            return
+        end
 
-        local total = #tbl4.Pumpkins
-        local lines = { "kandidat objek: " .. total }
+        probe.running = true
 
-        for i, obj in ipairs(tbl4.Pumpkins) do
-            local part = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
-            table.insert(lines, string.format("%d. %s (%s) part=%s", i, obj:GetFullName(), obj.ClassName, tostring(part ~= nil)))
+        task.spawn(function()
+            local lines = {}
+            local conns = {}
 
-            local prompt = obj:FindFirstChildWhichIsA("ProximityPrompt", true)
-            local click = obj:FindFirstChildWhichIsA("ClickDetector", true)
-            table.insert(lines, string.format("   ProximityPrompt=%s  ClickDetector=%s", tostring(prompt ~= nil), tostring(click ~= nil)))
+            fn2(true)
 
-            for _, attr in ipairs({ "action", "special", "EquippedItem" }) do
-                local v = obj:GetAttribute(attr)
-                if v ~= nil then
-                    table.insert(lines, string.format("   atribut %s = %s", attr, tostring(v)))
+            local total = #tbl4.Pumpkins
+            table.insert(lines, "kandidat objek: " .. total)
+
+            for i, obj in ipairs(tbl4.Pumpkins) do
+                local part = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
+                table.insert(lines, string.format("%d. %s (%s) part=%s",
+                    i, obj:GetFullName(), obj.ClassName, tostring(part ~= nil)))
+
+                local prompt = obj:FindFirstChildWhichIsA("ProximityPrompt", true)
+                local click = obj:FindFirstChildWhichIsA("ClickDetector", true)
+                table.insert(lines, string.format("   ProximityPrompt=%s  ClickDetector=%s",
+                    tostring(prompt ~= nil), tostring(click ~= nil)))
+            end
+
+            local char = localPlayer.Character
+            local ci = char and char:FindFirstChild("CheckInterractable")
+
+            if not ci then
+                table.insert(lines, "CheckInterractable: TIDAK ADA di character (probe dilewatin)")
+            else
+                table.insert(lines, "atribut CheckInterractable pas mulai:")
+                for k, v in pairs(ci:GetAttributes()) do
+                    table.insert(lines, string.format("   %s = %s", k, tostring(v)))
                 end
+
+                -- 1. perubahan atribut apa pun di CheckInterractable. Ini yang paling
+                --    nentuin: aksi yang dipakai game bakal muncul di sini sebagai true.
+                table.insert(conns, ci.AttributeChanged:Connect(function(name)
+                    table.insert(lines, string.format("   [ENABLE] %s = %s", name, tostring(ci:GetAttribute(name))))
+                end))
+
+                -- 2. instance baru di character: kalau ambil pumpkin ngasih tool/item,
+                --    nongol di sini.
+                table.insert(conns, char.ChildAdded:Connect(function(child)
+                    table.insert(lines, string.format("   [OBJ BARU] %s (%s)", child.Name, child.ClassName))
+                end))
             end
-        end
 
-        -- Yang paling nentuin: pas character lagi nempel pumpkin, game nulis apa di
-        -- CheckInterractable? Dari situ ketahuan aksi apa yang harus dipicu.
-        local char = localPlayer and localPlayer.Character
-        local ci = char and char:FindFirstChild("CheckInterractable")
-
-        if ci then
-            table.insert(lines, "CheckInterractable atribut (posisi sekarang):")
-            for k, v in pairs(ci:GetAttributes()) do
-                table.insert(lines, string.format("   %s = %s", k, tostring(v)))
+            -- 3. pumpkin yang hilang dari map. Kalau ada yang lepas PARENT-nya pas kamu
+            --    interaksi, itu bukti kuat pumpkin-nya KEAMBIL -- dan sekaligus jawaban
+            --    "auto farm ini beneran ngambil atau cuma muter TP".
+            local names = {}
+            for i, obj in ipairs(tbl4.Pumpkins) do
+                names[obj] = string.format("#%d %s", i, obj.Name)
+                table.insert(conns, obj.AncestryChanged:Connect(function(_, parent)
+                    if not parent then
+                        table.insert(lines, string.format("   [PUMPKIN HILANG] %s -- kemungkinan besar KEAMBIL", names[obj] or obj.Name))
+                    end
+                end))
             end
-        else
-            table.insert(lines, "CheckInterractable: TIDAK ADA di character")
-        end
 
-        local copied = DumpReport("PROBE PUMPKIN", lines)
+            lib:Notify({
+                Title = "Probe Pumpkin",
+                Description = "Merekam 12 detik -- SEKARANG deketin & ambil pumpkin-nya",
+                Duration = 6,
+            })
 
-        lib:Notify({
-            Title = "Probe Pumpkin",
-            Description = copied and "Di-copy ke clipboard -- paste ke chat" or "Di-dump ke console",
-            Duration = 5,
-        })
+            task.wait(12)
+
+            for _, c in ipairs(conns) do
+                pcall(function() c:Disconnect() end)
+            end
+
+            table.insert(lines, "atribut CheckInterractable pas selesai:")
+            if ci and ci.Parent then
+                for k, v in pairs(ci:GetAttributes()) do
+                    table.insert(lines, string.format("   %s = %s", k, tostring(v)))
+                end
+            else
+                table.insert(lines, "(CheckInterractable udah nggak ada)")
+            end
+
+            local copied = DumpReport("PROBE PUMPKIN (rekaman 12s)", lines)
+            probe.running = false
+
+            lib:Notify({
+                Title = "Probe Pumpkin",
+                Description = copied and "Selesai -- hasilnya di clipboard, paste ke chat" or "Selesai -- cek console",
+                Duration = 6,
+            })
+        end)
     end)
 end
 
