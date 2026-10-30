@@ -22,7 +22,7 @@ _G.AerisSessionTimestamp = os.time()
 -- Build tag. Executor sering nge-cache hasil game:HttpGet, jadi gampang ketipu:
 -- script kelihatan "udah di-update" padahal yang jalan masih versi lama. Tag ini
 -- muncul di notifikasi startup, jadi ketahuan versi mana yang beneran jalan.
-local AERIS_BUILD = "vd-2.6"
+local AERIS_BUILD = "vd-2.7"
 
 -- Helper: Get Safe GUI Parent (Executors / CoreGui / PlayerGui)
 local function GetGuiParent()
@@ -16981,6 +16981,8 @@ do
         emptyPass = 0,
         taken = 0,
         visited = 0,
+        zeroPass = 0,
+        total = 0,
     }
 
     local probe = { running = false }
@@ -17127,6 +17129,42 @@ do
         end
     end
 
+    -- CheckInterractable.interactPoint itu sinyal resmi dari game: isinya Vector3
+    -- posisi interactable yang lagi ada di jangkauan, dan jadi nil kalau nggak ada.
+    -- Ini jauh lebih akurat daripada nebak pakai jeda waktu -- tombolnya dicet pas
+    -- game-nya sendiri udah ngaku ada yang bisa diinteraksi.
+    local function interactPoint()
+        local char = localPlayer.Character
+        local ci = char and char:FindFirstChild("CheckInterractable")
+        return ci and ci:GetAttribute("interactPoint")
+    end
+
+    local function waitInteractable(timeout)
+        local deadline = tick() + (timeout or 0.5)
+
+        while tick() < deadline do
+            if interactPoint() ~= nil then return true end
+            task.wait(0.03)
+        end
+
+        return false
+    end
+
+    -- Satu kali pengambilan: tunggu game ngaku ada interactable, cet tombol aksi,
+    -- terus pastiin model-nya beneran lepas dari map. Dipakai dua kali kalau percobaan
+    -- pertama nggak nyantol -- lebih baik diulang daripada pumpkin-nya kelewat begitu aja.
+    local function attemptTake(model, part)
+        if _G.Ox.PumpkinPressButton ~= false then
+            waitInteractable(0.5)
+            fireButton(findActionButton())
+        else
+            tryInteract(model)
+        end
+
+        task.wait(_G.Ox.PumpkinFarmDelay or 0.8)
+        return model.Parent == nil
+    end
+
     -- Coba picu pengambilan. urutannya sengaja: fireproximityprompt (kalau executor
     -- nyediain) lebih andal daripada InputHold manual, dan ClickDetector terakhir
     -- karena paling jarang dipakai game modern.
@@ -17170,6 +17208,10 @@ do
         farm.index = 1
         farm.list = {}
         farm.emptyPass = 0
+        farm.zeroPass = 0
+        farm.total = 0
+        farm.taken = 0
+        farm.visited = 0
 
         task.spawn(function()
             while farm.running and _G.Ox.ScriptAlive do
@@ -17205,16 +17247,33 @@ do
                     if farm.visited > 0 then
                         lib:Notify({
                             Title = "Pumpkin Farm",
-                            Description = string.format("%d dari %d pumpkin keambil", farm.taken, farm.visited),
+                            Description = string.format("Putaran: %d/%d keambil | total sesi: %d",
+                                farm.taken, farm.visited, farm.total or 0),
                             Duration = 3,
                         })
 
-                        if farm.taken < farm.visited then
-                            lib:Notify({
-                                Title = "Pumpkin Farm",
-                                Description = "Ada yang belum keambil -- coba naikin Farm Delay, atau nyalain Tombol Interaksi",
-                                Duration = 5,
-                            })
+                        -- Dua putaran beruntun nol = bukan soal timing lagi. Daripada
+                        -- muterin map tanpa hasil, farm-nya dimatiin sendiri sambil bilang
+                        -- sebabnya. Kebijakan ini pilihan sadar: muter terus kelihatan
+                        -- seperti jalan padahal cuma TP doang.
+                        if farm.taken == 0 then
+                            farm.zeroPass = (farm.zeroPass or 0) + 1
+
+                            if farm.zeroPass >= 2 then
+                                lib:Notify({
+                                    Title = "Pumpkin Farm",
+                                    Description = "2 putaran nol hasil -- farm dihentikan. Cek 'Tes Tombol Aksi'",
+                                    Duration = 6,
+                                })
+                                farm.running = false
+                                _G.Ox.Teleport.Silent = false
+
+                                if farmToggle and farmToggle.GetValue and farmToggle:GetValue() then
+                                    farmToggle:SetValue(false)
+                                end
+                            end
+                        else
+                            farm.zeroPass = 0
                         end
                     end
 
@@ -17233,23 +17292,18 @@ do
                     _G.Ox.Teleport.Silent = false
                     touchPart(target.part)
 
-                    tryInteract(target.model)
+                    -- Percobaan pertama. Kalau model-nya belum lepas, coba sekali lagi --
+                    -- kadang karakter belum settle atau tombolnya belum visible pas dicet.
+                    local ok = attemptTake(target.model, target.part)
 
-                    -- Tombol aksi dicet SETELAH jeda pendek. Dua sebabnya:
-                    -- (1) game baru nge-set interactPoint + nampilin tombolnya setelah
-                    --     karakter nyampe, jadi kalau dicet langsung tombolnya belum ada;
-                    -- (2) findActionButton nyaring pakai .Visible, yang artinya sama.
-                    if _G.Ox.PumpkinPressButton ~= false then
-                        task.wait(0.25)
-                        fireButton(findActionButton())
+                    if not ok and target.model.Parent then
+                        touchPart(target.part)
+                        ok = attemptTake(target.model, target.part)
                     end
 
-                    task.wait(_G.Ox.PumpkinFarmDelay or 0.8)
-
-                    -- Dicek SETELAH jeda: kalau model-nya udah lepas dari map, berarti
-                    -- keambil. Dipakai buat laporan, bukan buat nebak-nebak.
-                    if not target.model.Parent then
+                    if ok then
                         farm.taken = farm.taken + 1
+                        farm.total = (farm.total or 0) + 1
                     end
                 end
             end
