@@ -381,10 +381,15 @@ local function CreateAerisLibrary()
                     availX = math.max(160, vp.X - inset.X * 2)
                     availY = math.max(120, vp.Y - inset.Y * 2)
                 end)
-                -- Window boleh makan maks 95% lebar & 92% tinggi area kepake. Dulu
-                -- 88%/82% kerasa kekecilan di HP. Fit cuma ngecil (max 1): di PC tetap
-                -- kayak aslinya.
-                fit = math.min(1, (availX * 0.95) / DESIGN_W, (availY * 0.92) / DESIGN_H)
+                -- Window boleh makan maks 95% lebar & 92% tinggi area kepake.
+                -- Di PC fit cuma ngecil (cap 1.0) supaya tetap 1:1 kayak desain.
+                -- Di HP cap-nya dilepas sampai 160%: window desain 690x470 itu kecil
+                -- banget di layar 1080p+ (cuma ~35% lebar layar), makanya kelihatan mini.
+                local maxFit = 1
+                if UserInputService.TouchEnabled then
+                    maxFit = 1.6
+                end
+                fit = math.min(maxFit, (availX * 0.95) / DESIGN_W, (availY * 0.92) / DESIGN_H)
             end
             uiScale.Scale = math.clamp(fit * (lib.UserScale or 1), 0.30, 1.6)
             -- Skala berubah = ukuran window di layar berubah, jadi window yang tadinya

@@ -4,7 +4,7 @@ Versi **tanpa key system** dari Aeris Hub VD. Key check (menu verifikasi, `REQUI
 file `Aeris/key_<userId>.json`, badge "Aeris Verified", countdown key di sidebar) sudah dibuang
 total — script langsung jalan begitu di-execute.
 
-- File: `Aeris_Hub_nokey.lua` (17.131 baris)
+- File: `Aeris_Hub_nokey.lua` (17.136 baris)
 - Platform: Roblox executor (butuh `require`, `firesignal`, `gethui`, `writefile`/`readfile` opsional)
 - Place: [BUTCHER] Violence District (PlaceId `93978595733734`)
 - UI: engine sendiri (nggak HttpGet library luar)
@@ -43,17 +43,19 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/xnotyours/aeris-hub-n
 Window-nya fixed 690x470 px, jadi di HP keliatan kebesaran sampai keluar layar. Sekarang
 ada `UIScale` di frame window + auto-fit:
 
-- **Auto Fit Layar (HP)** — default NYALA. Window ngecil otomatis kalau viewport sempit
-  (dan tetap 1:1 kayak aslinya di PC, karena fit cuma bisa ngecil, max 1.0). Window boleh
-  makan sampai **95% lebar & 92% tinggi** area yang kepake (naik dari 88%/82% biar nggak
-  kekecilan di HP).
+- **Auto Fit Layar (HP)** — default NYALA. Window ngecil otomatis kalau viewport sempit,
+  dan **membesar otomatis di HP sampai 160%**. Window desain 690x470 px itu cuma ~35%
+  lebar layar di HP 1080p+, makanya dulu kelihatan mini. Di PC tetap 1:1 kayak desainnya
+  (cap 1.0), jadi layout desktop nggak berubah.
+- Window ngejar **95% lebar & 92% tinggi** area yang kepake — mana yang lebih dulu kena.
 - **UI Scale (%)** — slider manual 50–160% kalau mau lebih kecil/besar.
 - **Reset Ukuran Window & Skala** — balikin auto-fit + 100%.
 - Auto-update kalau layar dirotasi / window di-resize (dengerin `ViewportSize`).
 
 Hitungan dari rumus auto-fit (bukan test di device, cuma aritmatika):
 
-- PC 1280x720 → scale 1.000 (690x470 px)
+- PC 1280x720 → scale 1.000 (690x470 px) — cap 1.0 berlaku
+- HP 1920x888 → scale 1.597 (1102x751 px) — dulu ke-cap di 1.000 (690x470 px)
 - HP 812x375 → scale 0.734 (506x345 px)
 - HP kecil 480x260 → scale 0.509 (351x239 px)
 
