@@ -17,7 +17,13 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/xnotyours/aeris-hub-n
 
 ## Fitur
 
-6 tab, 30 section, ±223 kontrol (81 toggle, 41 slider, 21 checkbox, 36 keybind, 20 tombol, 12 color picker, 10 dropdown):
+Daftar lengkap per tab/section — di-generate langsung dari source, bukan ditulis manual:
+**[FEATURES.md](FEATURES.md)** (6 tab, 30 section, 174 kontrol).
+
+Ringkasnya:
+
+6 tab, 30 section, 174 kontrol (80 toggle, 41 slider, 21 tombol, 20 checkbox, 9 dropdown,
+1 textbox, 10 color picker) + 80 slot keybind (satu per toggle):
 
 - **Main** — Auto Vault/Pallet Slide/Auto Run, Speed Boost, Skip Endscreen, Fake Perks (Quick Recovery,
   Perfect Landing, Flowstate, Adrenaline Rush, Perk Cooldown), Stretch Res, Third Person, Infinity Zoom,
