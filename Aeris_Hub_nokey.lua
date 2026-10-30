@@ -19,6 +19,11 @@ local localPlayer = Players.LocalPlayer or Players.PlayerAdded:Wait()
 
 _G.AerisSessionTimestamp = os.time()
 
+-- Build tag. Executor sering nge-cache hasil game:HttpGet, jadi gampang ketipu:
+-- script kelihatan "udah di-update" padahal yang jalan masih versi lama. Tag ini
+-- muncul di notifikasi startup, jadi ketahuan versi mana yang beneran jalan.
+local AERIS_BUILD = "vd-1.5"
+
 -- Helper: Get Safe GUI Parent (Executors / CoreGui / PlayerGui)
 local function GetGuiParent()
     local success, parent = pcall(function()
@@ -364,10 +369,13 @@ local function CreateAerisLibrary()
         uiScale.Parent = mainFrame
         lib.UIScale = uiScale
         lib.AutoFitHP = true
-        -- Zoom default: HP 120% (window desain 690x470 px itu kecil banget di layar
-        -- 1080p+), PC tetap 100% biar 1:1 kayak desain. Nilai ini juga yang jadi
-        -- angka awal slider "UI Scale (%)" di Settings.
-        lib.DefaultUserScale = UserInputService.TouchEnabled and 1.2 or 1
+        -- Zoom default 120%. Window desain 690x470 px itu kecil di layar modern
+        -- (cuma ~35% lebar layar di HP 1080p+), jadi default-nya dibesarin. Auto-fit
+        -- di bawah yang nahan biar nggak lewat layar kalau layarnya sempit.
+        -- Sengaja TIDAK digantung di UserInputService.TouchEnabled: sebagian executor
+        -- nggak nge-set flag itu dengan bener, dan kalau salah deteksi ukurannya balik
+        -- ke 100% tanpa kelihatan sebabnya.
+        lib.DefaultUserScale = 1.2
         lib.UserScale = lib.DefaultUserScale
 
         local DESIGN_W, DESIGN_H = 690, 470 -- ukuran asli window (px desain)
@@ -17136,4 +17144,11 @@ task.spawn(function()
     ReapplyPerformanceDelayed()
 end)
 
-lib:Notify({Title = "Aeris Hub", Description = "Loaded", Duration = 3})
+-- Notifikasi startup sengaja nampilin build + angka UI scale. Kalau ukuran window
+-- nggak berubah setelah update, dari sini langsung kelihatan: (1) versi yang jalan
+-- beneran versi baru apa bukan, (2) berapa viewport + skala yang kepake di device ini.
+lib:Notify({
+    Title = "Aeris Hub",
+    Description = "Build " .. AERIS_BUILD .. " | " .. (lib.UIScaleInfo and lib:UIScaleInfo() or "n/a"),
+    Duration = 8
+})
