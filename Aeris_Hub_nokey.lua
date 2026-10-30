@@ -364,12 +364,19 @@ local function CreateAerisLibrary()
         uiScale.Parent = mainFrame
         lib.UIScale = uiScale
         lib.AutoFitHP = true
-        lib.UserScale = 1
+        -- Zoom default: HP 120% (window desain 690x470 px itu kecil banget di layar
+        -- 1080p+), PC tetap 100% biar 1:1 kayak desain. Nilai ini juga yang jadi
+        -- angka awal slider "UI Scale (%)" di Settings.
+        lib.DefaultUserScale = UserInputService.TouchEnabled and 1.2 or 1
+        lib.UserScale = lib.DefaultUserScale
 
         local DESIGN_W, DESIGN_H = 690, 470 -- ukuran asli window (px desain)
 
         function lib:ApplyUIScale()
-            local fit = 1
+            -- Skala = zoom pilihan user (default 120% di HP, 100% di PC). Auto-fit
+            -- cuma boleh MENGECIL: kalau zoom-nya nggak muat di layar (HP kecil),
+            -- diturunin sampai muat — jadi window nggak pernah lewat bibir layar.
+            local scale = lib.UserScale or 1
             if lib.AutoFitHP then
                 local camScale = workspace.CurrentCamera
                 local vp = (camScale and camScale.ViewportSize) or Vector2.new(1280, 720)
@@ -381,17 +388,12 @@ local function CreateAerisLibrary()
                     availX = math.max(160, vp.X - inset.X * 2)
                     availY = math.max(120, vp.Y - inset.Y * 2)
                 end)
-                -- Window boleh makan maks 95% lebar & 92% tinggi area kepake.
-                -- Di PC fit cuma ngecil (cap 1.0) supaya tetap 1:1 kayak desain.
-                -- Di HP window desain 690x470 px itu kecil banget (~35% lebar layar di
-                -- 1080p+), jadi cap-nya dilepas ke 120% — pas, nggak kegedean.
-                local maxFit = 1
-                if UserInputService.TouchEnabled then
-                    maxFit = 1.2
-                end
-                fit = math.min(maxFit, (availX * 0.95) / DESIGN_W, (availY * 0.92) / DESIGN_H)
+                -- Batas keras: window boleh makan maks 95% lebar & 92% tinggi area
+                -- yang kepake, jadi selalu ada margin buat narik header-nya.
+                local fitLimit = math.min((availX * 0.95) / DESIGN_W, (availY * 0.92) / DESIGN_H)
+                scale = math.min(scale, fitLimit)
             end
-            uiScale.Scale = math.clamp(fit * (lib.UserScale or 1), 0.30, 1.6)
+            uiScale.Scale = math.clamp(scale, 0.30, 1.6)
             -- Skala berubah = ukuran window di layar berubah, jadi window yang tadinya
             -- pas bisa jadi udah lewat bibir layar. Clamp ulang posisinya (helper-nya
             -- didefinisiin di bawah, makanya dicek dulu biar aman saat load awal).
@@ -16905,7 +16907,7 @@ AppearanceCard:AddToggle("Auto Fit Layar (HP)", true, function(arg)
     end
 end, {Flag = "AutoFitHP"})
 
-AppearanceCard:AddSlider("UI Scale (%)", 30, 160, 100, function(arg)
+AppearanceCard:AddSlider("UI Scale (%)", 30, 160, math.floor((lib.DefaultUserScale or 1) * 100 + 0.5), function(arg)
     lib.UserScale = arg / 100
     if lib.ApplyUIScale then lib:ApplyUIScale() end
     if lib.UIScaleInfo then
@@ -16915,7 +16917,7 @@ end, {Increment = 5, Flag = "UIScaleManual"})
 
 AppearanceCard:AddButton("Reset Ukuran Window & Skala", function()
     lib.AutoFitHP = true
-    lib.UserScale = 1
+    lib.UserScale = lib.DefaultUserScale or 1
     if v.ResetWindowSize then v:ResetWindowSize() end
     if lib.ApplyUIScale then lib:ApplyUIScale() end
     if lib.UIScaleInfo then
