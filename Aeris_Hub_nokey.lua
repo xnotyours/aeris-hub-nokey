@@ -22,7 +22,7 @@ _G.AerisSessionTimestamp = os.time()
 -- Build tag. Executor sering nge-cache hasil game:HttpGet, jadi gampang ketipu:
 -- script kelihatan "udah di-update" padahal yang jalan masih versi lama. Tag ini
 -- muncul di notifikasi startup, jadi ketahuan versi mana yang beneran jalan.
-local AERIS_BUILD = "vd-1.8"
+local AERIS_BUILD = "vd-1.9"
 
 -- Helper: Get Safe GUI Parent (Executors / CoreGui / PlayerGui)
 local function GetGuiParent()
@@ -5167,7 +5167,24 @@ do
         local humanoidRootPart = character and character:FindFirstChild("HumanoidRootPart")
 
         if humanoidRootPart then
-            local vector = Vector3.new(0, 3, 0)
+            -- Offset disimpen di config, default 3 = sama kayak nilai hardcode yang lama.
+            -- Dinaikin kalau tujuan TP sering bikin character nyangkut di dalam geometry.
+            local tpCfg = _G.Ox.Teleport
+            local vector = Vector3.new(0, tpCfg.HeightOffset or 3, 0)
+
+            -- Safe Teleport: matiin collision sebentar SEBELUM pindah, biar character
+            -- nggak kejepit di dinding/lantai tujuan. Dibalikin setelah 0.3 detik —
+            -- nggak boleh lebih lama: selama CanCollide false, character balapan turun,
+            -- jadi kalau kelamaan bisa lewat lantai.
+            local uncollided = {}
+            if tpCfg.Safe and character then
+                for _, part in ipairs(character:GetDescendants()) do
+                    if part:IsA("BasePart") and part.CanCollide then
+                        part.CanCollide = false
+                        table.insert(uncollided, part)
+                    end
+                end
+            end
 
             if arg:IsA("BasePart") then
                 humanoidRootPart.CFrame = arg.CFrame + vector
@@ -5179,9 +5196,21 @@ do
                 end
             end
 
+            if #uncollided > 0 then
+                task.delay(0.3, function()
+                    for _, part in ipairs(uncollided) do
+                        pcall(function()
+                            if part.Parent then
+                                part.CanCollide = true
+                            end
+                        end)
+                    end
+                end)
+            end
+
             lib:Notify({
                 Title = "Teleport",
-                Description = "Success!",
+                Description = tpCfg.Safe and "Success! (safe)" or "Success!",
                 Duration = 1,
             })
         end
@@ -17109,6 +17138,46 @@ do
         lib:Notify({
             Title = "Generator",
             Description = string.format("%d generator di-dump ke console (F9)", #list),
+            Duration = 2.5,
+        })
+    end)
+end
+
+-- ===== F3: TELEPORT SETTINGS =====
+-- Semua tombol TP di script ini lewat fn3, jadi setting di sini otomatis kepakai
+-- di Teleport Map (termasuk 4 tombol generator dari F1), Teleport Player, dan
+-- Instant TP Gate. Nggak ada jalur TP yang perlu diatur satu-satu.
+do
+    local tpSetCard = T_Page:CreateSection("Teleport Settings", "move")
+
+    tpSetCard:AddToggle("Safe Teleport (Noclip Sesaat)", false, function(on)
+        _G.Ox.Teleport.Safe = on
+        lib:Notify({
+            Title = "Teleport",
+            Description = on and "Safe mode ON -- collision dimatiin 0.3s tiap TP" or "Safe mode OFF",
+            Duration = 2.5,
+        })
+    end, { Flag = "TeleportSafe" })
+
+    tpSetCard:AddSlider("Teleport Height Offset", 0, 20, 3, function(studs)
+        _G.Ox.Teleport.HeightOffset = studs
+    end, { Increment = 1, Flag = "TeleportHeight" })
+
+    -- Dipakai "Keliling Semua Generator" di Teleport Map. Jeda ini bukan hiasan:
+    -- TP berturut-turut tanpa jeda ditarik balik sama server, jadi cuma hop terakhir
+    -- yang nempel.
+    tpSetCard:AddSlider("Multi-Teleport Delay", 0.1, 3, 0.6, function(sec)
+        _G.Ox.Teleport.CycleDelay = sec
+    end, { Increment = 0.1, Flag = "TeleportDelay" })
+
+    tpSetCard:AddButton("Reset Setting Teleport", function()
+        _G.Ox.Teleport.Safe = false
+        _G.Ox.Teleport.HeightOffset = 3
+        _G.Ox.Teleport.CycleDelay = 0.6
+
+        lib:Notify({
+            Title = "Teleport",
+            Description = "Setting TP dibalikin ke default (offset 3, delay 0.6)",
             Duration = 2.5,
         })
     end)
