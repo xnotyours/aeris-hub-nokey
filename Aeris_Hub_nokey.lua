@@ -383,11 +383,11 @@ local function CreateAerisLibrary()
                 end)
                 -- Window boleh makan maks 95% lebar & 92% tinggi area kepake.
                 -- Di PC fit cuma ngecil (cap 1.0) supaya tetap 1:1 kayak desain.
-                -- Di HP cap-nya dilepas sampai 160%: window desain 690x470 itu kecil
-                -- banget di layar 1080p+ (cuma ~35% lebar layar), makanya kelihatan mini.
+                -- Di HP window desain 690x470 px itu kecil banget (~35% lebar layar di
+                -- 1080p+), jadi cap-nya dilepas ke 120% — pas, nggak kegedean.
                 local maxFit = 1
                 if UserInputService.TouchEnabled then
-                    maxFit = 1.6
+                    maxFit = 1.2
                 end
                 fit = math.min(maxFit, (availX * 0.95) / DESIGN_W, (availY * 0.92) / DESIGN_H)
             end
