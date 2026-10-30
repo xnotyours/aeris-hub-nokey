@@ -22,7 +22,7 @@ _G.AerisSessionTimestamp = os.time()
 -- Build tag. Executor sering nge-cache hasil game:HttpGet, jadi gampang ketipu:
 -- script kelihatan "udah di-update" padahal yang jalan masih versi lama. Tag ini
 -- muncul di notifikasi startup, jadi ketahuan versi mana yang beneran jalan.
-local AERIS_BUILD = "vd-1.7"
+local AERIS_BUILD = "vd-1.8"
 
 -- Helper: Get Safe GUI Parent (Executors / CoreGui / PlayerGui)
 local function GetGuiParent()
@@ -16391,6 +16391,199 @@ end, {Flag = "RemoveTexture"})
 
 LowGFXToggle = v50
 LowGFXToggle:AddKeyPicker("None")
+
+-- ===== F2: PERFORMANCE (HP) =====
+-- Engine LowGFX yang udah ada (tombol "Remove Texture") cuma nyentuh material, particle,
+-- VFX, dan tekstur. Yang belum kesentuh sama sekali: quality level client dan radius
+-- streaming — dua-duanya yang paling kerasa di HP. Ditambahin di sini.
+-- Sengaja NGGAK nyentuh Lighting.GlobalShadows: fitur "No Shadow" udah berdiri sendiri,
+-- kalau ULTRA ikut nyetel, dua toggle bakal saling nimpa pas salah satunya dimatiin.
+do
+    local ULTRA = { Quality = false, Distance = false }
+    local ownsLowGFX = false    -- true kalau ULTRA yang nyalain LowGFX, bukan user
+    local backup = {}           -- nilai asli, dipakai "Restore Performance"
+
+    local function userSettings()
+        local ok, s = pcall(function()
+            return UserSettings():GetService("UserGameSettings")
+        end)
+        return ok and s or nil
+    end
+
+    -- Nama enum-nya di-resolve lewat string supaya build Roblox yang nggak punya
+    -- variannya nggak bikin error di-parse — kalau nggak ada, hasilnya nil dan
+    -- pemanggilnya yang mutusin (dilewat, bukan crash).
+    local function qualityEnum(name)
+        local ok, v = pcall(function() return Enum.SavedQualitySetting[name] end)
+        return ok and v or nil
+    end
+
+    -- Quality level itu setting client, bukan property Instance, jadi disimpen di
+    -- UserGameSettings. Bungkus pcall: sebagian executor ngeblokir service ini.
+    local function getQuality()
+        local s = userSettings()
+        return s and s.SavedQualityLevel or nil
+    end
+
+    local function setQuality(level)
+        if level == nil then return false end
+        local s = userSettings()
+        if not s then return false end
+        return (pcall(function() s.SavedQualityLevel = level end))
+    end
+
+    -- Roblox nggak punya satu property "draw distance" buat client. Satu-satunya knob
+    -- yang beneran ngefek tanpa ngakalin visual adalah radius streaming, dan itu cuma
+    -- jalan kalau game-nya pakai StreamingEnabled. Makanya hasilnya dilaporin balik
+    -- lewat notifikasi, bukan dibiarkan diam-diam nggak ngefek.
+    local function distanceAvailable()
+        return workspace.StreamingEnabled == true
+    end
+
+    local function setDistance(studs)
+        if not distanceAvailable() then return false end
+        if backup.Distance == nil then
+            backup.Distance = workspace.StreamingTargetRadius
+        end
+        return (pcall(function()
+            workspace.StreamingTargetRadius = math.clamp(studs, 64, 1024)
+        end))
+    end
+
+    -- LowGFX yang ngerjain partikel + efek + tekstur. Cuma dimatiin balik kalau memang
+    -- ULTRA yang nyalain — kalau user sendiri yang nyalain tombol Remove Texture,
+    -- punya dia jangan disentuh.
+    local function lowGFXOn()
+        if not _G.Ox.LowGFX.Enabled then
+            ToggleLowGFX(true)
+            ownsLowGFX = true
+        end
+    end
+
+    local function lowGFXOff()
+        if ownsLowGFX then
+            ToggleLowGFX(false)
+            ownsLowGFX = false
+        end
+    end
+
+    local function applyQuality(on)
+        if on then
+            if backup.Quality == nil then
+                backup.Quality = getQuality()
+            end
+            ULTRA.Quality = setQuality(qualityEnum("QualityLevel1"))
+        else
+            setQuality(backup.Quality or qualityEnum("Automatic"))
+            ULTRA.Quality = false
+        end
+    end
+
+    local function applyDistance(on)
+        if on then
+            ULTRA.Distance = setDistance(_G.Ox.UltraRenderDistance or 256)
+        elseif workspace.StreamingEnabled then
+            pcall(function()
+                if backup.Distance then
+                    workspace.StreamingTargetRadius = backup.Distance
+                end
+            end)
+            ULTRA.Distance = false
+        end
+    end
+
+    local function applyAll()
+        lowGFXOn()
+        applyQuality(true)
+        applyDistance(true)
+
+        local parts = {}
+        if _G.Ox.LowGFX.Enabled then table.insert(parts, "LowGFX") end
+        if ULTRA.Quality then table.insert(parts, "quality 1") end
+        if ULTRA.Distance then
+            table.insert(parts, string.format("jarak %d studs", _G.Ox.UltraRenderDistance or 256))
+        end
+
+        lib:Notify({
+            Title = "Perform",
+            Description = #parts > 0 and ("Aktif: " .. table.concat(parts, " + ")) or "Tidak ada yang bisa diterapkan",
+            Duration = 3,
+        })
+    end
+
+    local function restoreAll()
+        applyQuality(false)
+        applyDistance(false)
+        lowGFXOff()
+
+        lib:Notify({
+            Title = "Perform",
+            Description = "Setting performa dibalikin",
+            Duration = 2.5,
+        })
+    end
+
+    local perfCard = EspPage:CreateSection("Performance (HP)", "gauge")
+
+    local ultraToggle
+    ultraToggle = perfCard:AddToggle("ULTRA Performance Mode", false, function(on)
+        if on then
+            applyAll()
+        else
+            restoreAll()
+        end
+    end, { Flag = "UltraPerf" })
+
+    perfCard:AddToggle("Lower Graphics Quality", false, function(on)
+        applyQuality(on)
+        lib:Notify({
+            Title = "Graphics",
+            Description = on and "Quality diturunin ke level 1" or "Quality dibalikin",
+            Duration = 2,
+        })
+    end, { Flag = "LowerGfx" })
+
+    perfCard:AddSlider("Render Distance (studs)", 64, 1024, 256, function(studs)
+        _G.Ox.UltraRenderDistance = studs
+        if ULTRA.Distance then
+            applyDistance(true)
+        end
+    end, { Increment = 32, Flag = "RenderDistance" })
+
+    -- Tombol diagnosa: tanpa ini, kalau radius streaming nggak ngefek (game nggak pakai
+    -- StreamingEnabled) user cuma lihat "nggak ada perubahan" tanpa tau sebabnya.
+    perfCard:AddButton("Cek Jalur Performa", function()
+        lib:Notify({
+            Title = "Performa",
+            Description = string.format(
+                "StreamingEnabled: %s | jarak: %s | LowGFX: %s",
+                tostring(distanceAvailable()),
+                distanceAvailable() and tostring(workspace.StreamingTargetRadius) or "n/a",
+                tostring(_G.Ox.LowGFX.Enabled)
+            ),
+            Duration = 5,
+        })
+    end)
+
+    -- SetValue nge-fire callback-nya, jadi jalurnya sengaja dilewat toggle biar
+    -- sekali klik = sekali jalan + sekali notif (bukan dobel).
+    perfCard:AddButton("Apply All Optimizations NOW", function()
+        if ultraToggle:GetValue() then
+            applyAll()
+        else
+            ultraToggle:SetValue(true)
+        end
+    end)
+
+    perfCard:AddButton("Restore Performance", function()
+        if ultraToggle:GetValue() then
+            ultraToggle:SetValue(false)
+        else
+            restoreAll()
+        end
+    end)
+end
+
 local v51 = EspPage:CreateSection("Map ESP", "map")
 MapCard = v51
 
