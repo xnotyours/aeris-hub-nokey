@@ -22,7 +22,7 @@ _G.AerisSessionTimestamp = os.time()
 -- Build tag. Executor sering nge-cache hasil game:HttpGet, jadi gampang ketipu:
 -- script kelihatan "udah di-update" padahal yang jalan masih versi lama. Tag ini
 -- muncul di notifikasi startup, jadi ketahuan versi mana yang beneran jalan.
-local AERIS_BUILD = "vd-1.6"
+local AERIS_BUILD = "vd-1.7"
 
 -- Helper: Get Safe GUI Parent (Executors / CoreGui / PlayerGui)
 local function GetGuiParent()
@@ -16775,6 +16775,151 @@ TeleportMapCard:AddButton("Teleport ke Window", function()
 
     _G.Ox.Teleport.WindowIndex = _G.Ox.Teleport.WindowIndex + 1
 end)
+
+-- ===== F1: TELEPORT GENERATOR PINTAR =====
+-- Cache map di `tbl` cuma nyimpen daftar hasil scan, jadi label "Generator 1..n" di
+-- tombol lama itu urutan ketemu-nya descendant — nggak ada hubungannya sama dekat/jauh.
+-- Buat ngejar gen terdekat/terjauh, jaraknya harus dihitung ulang tiap dipakai karena
+-- posisi pemain berubah terus. Dibungkus do..end supaya local di sini nggak nambah
+-- beban main chunk yang udah mepet limit 200 local.
+do
+    -- Resolve BasePart dari satu entri cache. Generator disimpan sebagai
+    -- {model=, part=}, jadi part-nya langsung ambil; kalau yang masuk Model mentah
+    -- (kayak hook/gate/pallet), baru dicari part pertamanya.
+    local function genPart(entry)
+        if not entry then return nil end
+        if entry.part then return entry.part end
+
+        local model = entry.model or entry
+        if typeof(model) == "Instance" then
+            return model:FindFirstChildWhichIsA("BasePart")
+        end
+        return nil
+    end
+
+    local function hrpOf()
+        local char = localPlayer and localPlayer.Character
+        return char and char:FindFirstChild("HumanoidRootPart")
+    end
+
+    -- Bangun daftar generator yang beneran punya part, terurut dari yang terdekat.
+    -- Kalau cache kosong, scan ulang pakai fn2(true) — argumen true buat lewatin
+    -- debounce 2 detik di fn2, biar tombolnya tetap responsif walau baru kelar scan.
+    local function sortedGenerators()
+        if #tbl.Generators == 0 then
+            fn2(true)
+        end
+
+        local me = hrpOf()
+        local origin = me and me.Position
+        local list = {}
+
+        for _, entry in ipairs(tbl.Generators) do
+            local part = genPart(entry)
+            if part then
+                table.insert(list, {
+                    part = part,
+                    dist = origin and (part.Position - origin).Magnitude or 0,
+                })
+            end
+        end
+
+        table.sort(list, function(a, b) return a.dist < b.dist end)
+        return list
+    end
+
+    TeleportMapCard:AddButton("TP Generator Terdekat", function()
+        local list = sortedGenerators()
+
+        if #list == 0 then
+            lib:Notify({ Title = "TP Generator", Description = "Generator tidak ditemukan!", Duration = 2 })
+            return
+        end
+
+        fn3(list[1].part)
+        lib:Notify({
+            Title = "TP Generator",
+            Description = string.format("Terdekat, %.0f studs", list[1].dist),
+            Duration = 1.5,
+        })
+    end)
+
+    TeleportMapCard:AddButton("TP Generator Terjauh", function()
+        local list = sortedGenerators()
+
+        if #list == 0 then
+            lib:Notify({ Title = "TP Generator", Description = "Generator tidak ditemukan!", Duration = 2 })
+            return
+        end
+
+        local far = list[#list]
+        fn3(far.part)
+        lib:Notify({
+            Title = "TP Generator",
+            Description = string.format("Terjauh, %.0f studs", far.dist),
+            Duration = 1.5,
+        })
+    end)
+
+    -- Keliling semua generator mulai dari yang terdekat. Dikasih jeda antar hop:
+    -- teleport tiap frame bikin character ditarik balik sama server, jadi hasilnya
+    -- cuma gen terakhir yang kena dan sisanya kelihatan nggak jalan.
+    TeleportMapCard:AddButton("Keliling Semua Generator", function()
+        local list = sortedGenerators()
+
+        if #list == 0 then
+            lib:Notify({ Title = "TP Generator", Description = "Generator tidak ditemukan!", Duration = 2 })
+            return
+        end
+
+        if _G.Ox.Teleport.CycleRunning then
+            _G.Ox.Teleport.CycleRunning = false
+            lib:Notify({ Title = "TP Generator", Description = "Keliling dihentikan", Duration = 1.5 })
+            return
+        end
+
+        _G.Ox.Teleport.CycleRunning = true
+
+        task.spawn(function()
+            for i, item in ipairs(list) do
+                if not _G.Ox.Teleport.CycleRunning then return end
+
+                fn3(item.part)
+                lib:Notify({
+                    Title = "TP Generator",
+                    Description = string.format("%d/%d, %.0f studs", i, #list, item.dist),
+                    Duration = 1,
+                })
+                task.wait(_G.Ox.Teleport.CycleDelay or 0.6)
+            end
+
+            _G.Ox.Teleport.CycleRunning = false
+            lib:Notify({ Title = "TP Generator", Description = "Keliling selesai", Duration = 1.5 })
+        end)
+    end)
+
+    -- Tombol urutan tetap nggak nunjukin mana yang dekat, jadi daftarnya dibuang ke
+    -- console — dari situ ketahuan index mana yang layak dipakai.
+    TeleportMapCard:AddButton("List Generator (Console)", function()
+        local list = sortedGenerators()
+
+        if #list == 0 then
+            lib:Notify({ Title = "Generator", Description = "Tidak ada generator di cache", Duration = 2 })
+            return
+        end
+
+        print("[Aeris Hub] Daftar generator, terurut dari terdekat:")
+        for i, item in ipairs(list) do
+            print(string.format("  %d. %.0f studs  posisi %s", i, item.dist, tostring(item.part.Position)))
+        end
+
+        lib:Notify({
+            Title = "Generator",
+            Description = string.format("%d generator di-dump ke console (F9)", #list),
+            Duration = 2.5,
+        })
+    end)
+end
 
 local v65 = T_Page:CreateSection("Teleport Player", "users")
 PlayerCard = v65
