@@ -22,7 +22,7 @@ _G.AerisSessionTimestamp = os.time()
 -- Build tag. Executor sering nge-cache hasil game:HttpGet, jadi gampang ketipu:
 -- script kelihatan "udah di-update" padahal yang jalan masih versi lama. Tag ini
 -- muncul di notifikasi startup, jadi ketahuan versi mana yang beneran jalan.
-local AERIS_BUILD = "vd-2.8"
+local AERIS_BUILD = "vd-2.9"
 
 -- Helper: Get Safe GUI Parent (Executors / CoreGui / PlayerGui)
 local function GetGuiParent()
@@ -16988,6 +16988,10 @@ do
 
     local probe = { running = false }
 
+    -- Default eksplisit: 'Tekan Tombol Aksi' nyala. Callback toggle baru jalan pas
+    -- diklik, jadi tanpa ini nilainya nil sampai user nyentuh toggle-nya.
+    _G.Ox.PumpkinPressButton = true
+
     local function characterRoot()
         local char = localPlayer and localPlayer.Character
         return char and char:FindFirstChild("HumanoidRootPart")
@@ -17154,16 +17158,48 @@ do
     -- Satu kali pengambilan: tunggu game ngaku ada interactable, cet tombol aksi,
     -- terus pastiin model-nya beneran lepas dari map. Dipakai dua kali kalau percobaan
     -- pertama nggak nyantol -- lebih baik diulang daripada pumpkin-nya kelewat begitu aja.
-    local function attemptTake(model, part)
-        if _G.Ox.PumpkinPressButton ~= false then
-            waitInteractable(0.5)
-            fireButton(findActionButton())
-        else
-            tryInteract(model)
+    -- Karakter baru di-TP masih bisa dalam posisi jatuh. Selama Humanoid.FloorMaterial
+    -- masih Air, game sering belum nganggep karakter ada di dekat interactable -- jadi
+    -- tunggu sampai kakinya nyentuh sesuatu dulu, baru nyet tombolnya.
+    local function grounded(timeout)
+        local deadline = tick() + (timeout or 0.5)
+
+        while tick() < deadline do
+            local char = localPlayer.Character
+            local hum = char and char:FindFirstChildOfClass("Humanoid")
+
+            if hum and hum.FloorMaterial ~= Enum.Material.Air then
+                return true
+            end
+
+            task.wait(0.03)
         end
 
+        return false
+    end
+
+    local function attemptTake(model, part)
+        -- ~= false, bukan == true: callback toggle nggak jalan saat script load, jadi
+        -- _G.Ox.PumpkinPressButton masih nil sampai user nyentuh toggle-nya. Nilai nil
+        -- harus dianggap "nyet" biar perilaku default-nya sesuai yang kelihatan di UI.
+        if _G.Ox.PumpkinPressButton ~= false then
+            for _ = 1, 3 do
+                if model.Parent == nil then return true end
+
+                grounded(0.5)
+                waitInteractable(0.4)
+                fireButton(findActionButton())
+
+                task.wait(_G.Ox.PumpkinFarmDelay or 0.8)
+            end
+
+            return model.Parent == nil
+        end
+
+        tryInteract(model)
         task.wait(_G.Ox.PumpkinFarmDelay or 0.8)
         return model.Parent == nil
+
     end
 
     -- Sinyal match jalan: folder "Map" ada di workspace. Ini bukan tebakan -- script
