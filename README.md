@@ -37,6 +37,24 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/xnotyours/aeris-hub-n
 - **Teleport** — Generator/Hook/Gate/Pallet/Window (gantian), Select Player + TP ke player
 - **Settings** — UI Config (transparency, lock, watermark, mobile button) + Config Manager
 
+
+## Fix layar HP (UI Scale)
+
+Window-nya fixed 690x470 px, jadi di HP keliatan kebesaran sampai keluar layar. Sekarang
+ada `UIScale` di frame window + auto-fit:
+
+- **Auto Fit Layar (HP)** — default NYALA. Window ngecil otomatis kalau viewport sempit
+  (dan tetap 1:1 kayak aslinya di PC, karena fit cuma bisa ngecil, max 1.0).
+- **UI Scale (%)** — slider manual 50–160% kalau mau lebih kecil/besar.
+- **Reset Ukuran Window & Skala** — balikin auto-fit + 100%.
+- Auto-update kalau layar dirotasi / window di-resize (dengerin `ViewportSize`).
+
+Angka measured di test harness:
+
+- PC 1280x720 → scale 1.000 (690x470 px)
+- HP 812x375 → scale 0.694 (479x326 px)
+- HP kecil 480x260 → scale 0.481 (332x226 px)
+
 ## Catatan
 
 - Fast Bandage masih memanggil `script.panduhub.com/BoostBandage.lua` (fitur lain tidak butuh internet).

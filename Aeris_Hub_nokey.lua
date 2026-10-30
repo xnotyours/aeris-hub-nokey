@@ -450,6 +450,38 @@ local function CreateAerisLibrary()
         mainFrame.ClipsDescendants = false
         mainFrame.Parent = mainGui
 
+        -- FIX HP: window 690x470 px itu kebesaran di layar HP. UIScale dipasang di
+        -- frame-nya (bukan di ScreenGui) supaya notifikasi/splash nggak ikut mengecil,
+        -- dan geser-geser window tetap 1:1 px.
+        local uiScale = Instance.new("UIScale")
+        uiScale.Name = "AerisUIScale"
+        uiScale.Scale = 1
+        uiScale.Parent = mainFrame
+        lib.UIScale = uiScale
+        lib.AutoFitHP = true
+        lib.UserScale = 1
+
+        function lib:ApplyUIScale()
+            local fit = 1
+            if lib.AutoFitHP then
+                local camScale = workspace.CurrentCamera
+                local vp = (camScale and camScale.ViewportSize) or Vector2.new(1280, 720)
+                -- 760x540 = ukuran desain + margin sedikit. Fit cuma ngecil (max 1),
+                -- jadi di PC tampilannya tetap sama kayak aslinya.
+                fit = math.min(1, math.min(vp.X / 760, vp.Y / 540))
+            end
+            uiScale.Scale = math.clamp(fit * (lib.UserScale or 1), 0.35, 1.6)
+        end
+        lib:ApplyUIScale()
+        pcall(function()
+            local camScale = workspace.CurrentCamera
+            if camScale then
+                camScale:GetPropertyChangedSignal("ViewportSize"):Connect(function()
+                    pcall(function() lib:ApplyUIScale() end)
+                end)
+            end
+        end)
+
         local mainCorner = Instance.new("UICorner")
         mainCorner.CornerRadius = UDim.new(0, 14)
         mainCorner.Parent = mainFrame
@@ -16806,6 +16838,22 @@ end, {Flag = "Watermark"})
 AppearanceCard:AddToggle("Always Show Mobile Button", false, function(arg)
     v:SetAlwaysShowMobileButton(arg)
 end, {Flag = "AlwaysMobileButton"})
+
+AppearanceCard:AddToggle("Auto Fit Layar (HP)", true, function(arg)
+    lib.AutoFitHP = arg
+    if lib.ApplyUIScale then lib:ApplyUIScale() end
+end, {Flag = "AutoFitHP"})
+
+AppearanceCard:AddSlider("UI Scale (%)", 50, 160, 100, function(arg)
+    lib.UserScale = arg / 100
+    if lib.ApplyUIScale then lib:ApplyUIScale() end
+end, {Increment = 5, Flag = "UIScaleManual"})
+
+AppearanceCard:AddButton("Reset Ukuran Window & Skala", function()
+    lib.AutoFitHP = true
+    lib.UserScale = 1
+    if lib.ApplyUIScale then lib:ApplyUIScale() end
+end)
 
 local Config = S_Page1:CreateSection("Config", "sliders-vertical")
 SavesCard = Config
