@@ -4,7 +4,7 @@ Versi **tanpa key system** dari Aeris Hub VD. Key check (menu verifikasi, `REQUI
 file `Aeris/key_<userId>.json`, badge "Aeris Verified", countdown key di sidebar) sudah dibuang
 total — script langsung jalan begitu di-execute.
 
-- File: `Aeris_Hub_nokey.lua` (17.160 baris)
+- File: `Aeris_Hub_nokey.lua` (17.131 baris)
 - Platform: Roblox executor (butuh `require`, `firesignal`, `gethui`, `writefile`/`readfile` opsional)
 - Place: [BUTCHER] Violence District (PlaceId `93978595733734`)
 - UI: engine sendiri (nggak HttpGet library luar)
@@ -44,16 +44,18 @@ Window-nya fixed 690x470 px, jadi di HP keliatan kebesaran sampai keluar layar. 
 ada `UIScale` di frame window + auto-fit:
 
 - **Auto Fit Layar (HP)** — default NYALA. Window ngecil otomatis kalau viewport sempit
-  (dan tetap 1:1 kayak aslinya di PC, karena fit cuma bisa ngecil, max 1.0).
+  (dan tetap 1:1 kayak aslinya di PC, karena fit cuma bisa ngecil, max 1.0). Window boleh
+  makan sampai **95% lebar & 92% tinggi** area yang kepake (naik dari 88%/82% biar nggak
+  kekecilan di HP).
 - **UI Scale (%)** — slider manual 50–160% kalau mau lebih kecil/besar.
 - **Reset Ukuran Window & Skala** — balikin auto-fit + 100%.
 - Auto-update kalau layar dirotasi / window di-resize (dengerin `ViewportSize`).
 
-Angka measured di test harness:
+Hitungan dari rumus auto-fit (bukan test di device, cuma aritmatika):
 
 - PC 1280x720 → scale 1.000 (690x470 px)
-- HP 812x375 → scale 0.694 (479x326 px)
-- HP kecil 480x260 → scale 0.481 (332x226 px)
+- HP 812x375 → scale 0.734 (506x345 px)
+- HP kecil 480x260 → scale 0.509 (351x239 px)
 
 
 ## Anti nyangkut di luar layar (posisi window)
@@ -84,22 +86,22 @@ nggak nebak — dia geser, ukur hasil aslinya, terus koreksi sisa error pakai fa
 Diuji di harness 2 semantik (offset di-skala / 1:1), dua-duanya lolos.
 
 
-## Minimize jadi pill kompak
+## Minimize — auto hide total
 
-Minimize dulu cuma ngecilin tinggi window jadi 52 px, tapi lebarnya tetap ikut window
-(690 px desain) — di HP itu jadi bar lebar yang nutupin sepertiga atas layar. Sekarang
-minimize bikin window jadi pill kompak:
+Minimize (`-`) sekarang **sembunyi total**: window ditutup dan yang kelihatan cuma tombol
+floating bulat 48x48 di **pojok kanan atas** (di bawah top bar Roblox, ngikutin
+`GuiService:GetGuiInset()`). Nggak ada lagi bar/pill setengah-setengah yang bisa kesenggol
+terus kebuka sendiri pas lagi main.
 
-- **Lebar ikut mengecil** — 250x52 px (desain) saat minimize, bukan lagi selebar window.
-- **Posisi dipertahankan** — pill muncul di tempat window terakhir ditaruh (tetap
-  di-clamp biar kejangkau), jadi nggak lompat sendiri ke pojok.
-- **Tap dua kali di header** buat toggle minimize/expand. Di HP nggak ada hover, jadi ini
-  jalan pintas selain nyari tombol `+`/`-` yang kecil.
-- **Expand balikin utuh** — ukuran terakhir sebelum minimize (termasuk kalau sebelumnya
-  udah di-resize) plus posisi asalnya.
-- **Resize grip disembunyiin** pas minimize — percuma bisa resize waktu lagi kecil.
-- **Reset Ukuran Window** sekarang balikin state minimize ke pill kompak juga (dulu tetap
-  balik ke bar lebar).
+- **Tap tombol floating** → window kebuka lagi dalam ukuran penuh.
+- **Tombol `-` dan `X` sama-sama nutup** ke tombol floating — dua-duanya bisa dibuka lagi.
+- **Tombol floating bisa di-drag** kalau mau dipindah, dan tetap di-clamp biar nggak bisa
+  dibuang keluar layar (kalau hilang, menunya nggak bisa dibuka lagi di HP).
+- **"Selalu tampil tombolnya"** di Settings → UI Config kalau mau tombol floating tetap
+  kelihatan walau menunya lagi kebuka.
+- **Tap dua kali di header buat minimize sudah dihapus** — itu yang tadi bikin window kebuka
+  sendiri cuma gara-gara kegeser/kesenggol.
+- **Reset Ukuran Window** balikin window ke 690x470 desain dan matiin state minimize.
 
 
 ## Branding

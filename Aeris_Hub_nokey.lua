@@ -381,9 +381,10 @@ local function CreateAerisLibrary()
                     availX = math.max(160, vp.X - inset.X * 2)
                     availY = math.max(120, vp.Y - inset.Y * 2)
                 end)
-                -- Window boleh makan maks 88% lebar & 82% tinggi area kepake, jadi
-                -- selalu ada margin. Fit cuma ngecil (max 1): di PC tetap kayak aslinya.
-                fit = math.min(1, (availX * 0.88) / DESIGN_W, (availY * 0.82) / DESIGN_H)
+                -- Window boleh makan maks 95% lebar & 92% tinggi area kepake. Dulu
+                -- 88%/82% kerasa kekecilan di HP. Fit cuma ngecil (max 1): di PC tetap
+                -- kayak aslinya.
+                fit = math.min(1, (availX * 0.95) / DESIGN_W, (availY * 0.92) / DESIGN_H)
             end
             uiScale.Scale = math.clamp(fit * (lib.UserScale or 1), 0.30, 1.6)
             -- Skala berubah = ukuran window di layar berubah, jadi window yang tadinya
@@ -793,71 +794,19 @@ local function CreateAerisLibrary()
 
         local originalSize = mainFrame.Size
 
-        -- ===== MINIMIZE MODE: pill kompak =====
-        -- Dulu minimize cuma ngecilin TINGGI-nya doang, jadi hasilnya bar 690x52
-        -- yang tetap selebar window -> di HP nutupin sepertiga atas layar. Sekarang
-        -- lebarnya ikut dikecilin jadi pill kompak, posisi dipertahankan (di-clamp
-        -- biar tetap kejangkau), dan bisa di-tap dua kali buat balik ke window penuh.
-        local MINI_W, MINI_H = 250, 52 -- ukuran pill saat minimize (px desain)
-        local restoreSize = originalSize -- ukuran terakhir sebelum minimize
-        local restorePos = nil
-
-        local function applyMinimized(minimized)
-            window.IsMinimized = minimized == true
-            if window.IsMinimized then
-                restoreSize = mainFrame.Size
-                restorePos = mainFrame.Position
-                TweenService:Create(mainFrame, TweenInfo.new(0.28, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
-                    Size = UDim2.new(0, MINI_W, 0, MINI_H),
-                    BackgroundTransparency = 0.30
-                }):Play()
-                sidebar.Visible = false
-                contentArea.Visible = false
-                resizeGrip.Visible = false
-                minBtn.Text = "+"
-            else
-                TweenService:Create(mainFrame, TweenInfo.new(0.28, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
-                    Size = restoreSize,
-                    BackgroundTransparency = 0.20
-                }):Play()
-                sidebar.Visible = true
-                contentArea.Visible = true
-                resizeGrip.Visible = not winLocked
-                minBtn.Text = "-"
-                if restorePos then mainFrame.Position = restorePos end
-            end
-            -- Ukuran berubah = tepi window bisa lewat bibir layar. Tween butuh waktu,
-            -- jadi clamp-nya ditunda sampai animasinya kelar.
-            task.delay(0.32, function()
-                pcall(function() keepOnScreen(mainFrame) end)
-            end)
-        end
-
-        minBtn.MouseButton1Click:Connect(function()
-            applyMinimized(not window.IsMinimized)
-        end)
-
-        -- Tap dua kali di header = toggle minimize. Di HP nggak ada hover, jadi ini
-        -- jalan pintas selain nyari tombol +/- yang kecil.
-        local lastHeaderTap = 0
-        header.InputBegan:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-                local now = tick()
-                if now - lastHeaderTap < 0.35 then
-                    lastHeaderTap = 0
-                    applyMinimized(not window.IsMinimized)
-                else
-                    lastHeaderTap = now
-                end
-            end
-        end)
+        -- Minimize nggak lagi ninggalin "pill" setengah-setengah: sekarang sembunyi
+        -- total ke tombol floating di pojok kanan atas. Handler minBtn-nya dipasang
+        -- di bawah bareng closeBtn, karena butuh SetMenuOpen yang baru ada setelah blok ini.
 
         -- Floating Mobile / Quick-Open Toggle Button
         local alwaysShowMobile = false
         local mobileToggle = Instance.new("TextButton")
         mobileToggle.Name = "AerisMobileToggle"
         mobileToggle.Size = UDim2.new(0, 48, 0, 48)
-        mobileToggle.Position = UDim2.new(0, 18, 0.45, -24)
+        -- Dikunci di pojok KANAN ATAS. mainGui.IgnoreGuiInset = true, jadi Y-nya harus
+        -- digeser sejauh tinggi top bar Roblox; kalau nggak, tombolnya ketiban bar.
+        mobileToggle.AnchorPoint = Vector2.new(1, 0)
+        mobileToggle.Position = UDim2.new(1, -14, 0, 14)
         mobileToggle.BackgroundColor3 = Color3.fromRGB(22, 14, 36)
         mobileToggle.BackgroundTransparency = 0.25
         mobileToggle.BorderSizePixel = 0
@@ -889,6 +838,25 @@ local function CreateAerisLibrary()
         mtLogo.Parent = mobileToggle
 
         lib:ApplyShimmer(mobileToggle, 1.5)
+
+        -- Posisi tombol floating: pojok kanan atas, di bawah top bar Roblox.
+        local function placeMobileToggle()
+            local insetTop = 0
+            pcall(function()
+                insetTop = game:GetService("GuiService"):GetGuiInset().Y
+            end)
+            mobileToggle.Position = UDim2.new(1, -14, 0, insetTop + 14)
+        end
+        placeMobileToggle()
+
+        pcall(function()
+            local camScale = workspace.CurrentCamera
+            if camScale then
+                camScale:GetPropertyChangedSignal("ViewportSize"):Connect(function()
+                    pcall(placeMobileToggle)
+                end)
+            end
+        end)
 
         local isMenuOpen = true
         local lastToggleTick = 0
@@ -980,6 +948,13 @@ local function CreateAerisLibrary()
             SetMenuOpen(false)
         end)
 
+        -- Tombol minimize (-) = sembunyi total, sama kayak close: window ditutup dan
+        -- yang kelihatan cuma tombol floating di pojok kanan atas. Nggak ada bar/pill
+        -- yang bisa kesenggol terus kebuka sendiri pas lagi main.
+        minBtn.MouseButton1Click:Connect(function()
+            SetMenuOpen(false)
+        end)
+
         UserInputService.InputBegan:Connect(function(input, gpe)
             if not gpe and input.KeyCode == lib.MenuKey then
                 ToggleMenu()
@@ -998,12 +973,8 @@ local function CreateAerisLibrary()
         -- nggak punya jalan balik: begitu ditarik gede, ukurannya nempel sampai
         -- script di-execute ulang.
         function window:ResetWindowSize()
-            local target = originalSize
-            if window.IsMinimized then
-                target = UDim2.new(0, MINI_W, 0, MINI_H)
-            end
-            mainFrame.Size = target
-            restoreSize = originalSize
+            mainFrame.Size = originalSize
+            window.IsMinimized = false
             keepOnScreen(mainFrame)
         end
 
