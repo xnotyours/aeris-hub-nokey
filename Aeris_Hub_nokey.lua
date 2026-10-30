@@ -22,7 +22,7 @@ _G.AerisSessionTimestamp = os.time()
 -- Build tag. Executor sering nge-cache hasil game:HttpGet, jadi gampang ketipu:
 -- script kelihatan "udah di-update" padahal yang jalan masih versi lama. Tag ini
 -- muncul di notifikasi startup, jadi ketahuan versi mana yang beneran jalan.
-local AERIS_BUILD = "vd-2.5"
+local AERIS_BUILD = "vd-2.6"
 
 -- Helper: Get Safe GUI Parent (Executors / CoreGui / PlayerGui)
 local function GetGuiParent()
@@ -17037,6 +17037,24 @@ do
                     return btn
                 end
             end
+
+            -- Cadangan terakhir kalau nama-nya berubah: tombol paling gede yang visible
+            -- di Controls. Dari dump di device, action = 96x96 dan itu memang yang paling
+            -- gede (Gui-mob 88x88, sprint 51x51, crouch 51x51), jadi urutannya kebukti.
+            local biggest, biggestArea = nil, 0
+
+            for _, child in ipairs(controls:GetChildren()) do
+                if child:IsA("GuiObject") and child.Visible then
+                    local size = child.AbsoluteSize
+                    local area = size.X * size.Y
+
+                    if area > biggestArea then
+                        biggest, biggestArea = child, area
+                    end
+                end
+            end
+
+            return biggest
         end
 
         return nil
