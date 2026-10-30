@@ -56,6 +56,32 @@ Angka measured di test harness:
 - HP kecil 480x260 → scale 0.481 (332x226 px)
 
 
+## Anti nyangkut di luar layar (posisi window)
+
+Dulu window bisa di-drag sampai headernya lewat atas layar. Begitu header hilang, nggak ada
+lagi bagian yang bisa dipegang buat narik balik — satu-satunya jalan adalah re-execute
+script. Sekarang:
+
+- **Drag di-clamp** — tiap geser, posisi window diukur ulang (`AbsolutePosition`) dan
+  ditahan biar selalu utuh di dalam viewport, jadi header mustahil kabur ke atas.
+- **Clamp ikut jalan saat resize & ganti skala/layar** — gedein window atau rotasi HP
+  nggak bisa bikin sisi lain kelewat layar. Kalau window beneran lebih gede dari layar,
+  dia dipaku ke pinggir atas/kiri supaya header tetap kejangkau.
+- **Lock GUI beneran ngunci** — toggle di Settings → UI Config sekarang menahan drag &
+  resize (sebelumnya cuma nyimpen flag yang nggak ada pengeceknya, jadi keliatan nyala
+  padahal window masih bisa digeser).
+- **Balikin Window ke Tengah** — tombol recovery di Settings → UI Config, buat balikin
+  posisi kalau window udah kepepet di pinggir.
+- **Reset Ukuran Window & Skala** sekarang juga balikin ukuran window ke 690x470 desain
+  (dulu resize nggak punya jalan balik sama sekali).
+- Tombol buka menu di HP (floating button) juga di-clamp — nggak bisa lagi ditarik ke
+  luar layar sampai menunya nggak bisa dibuka.
+
+Catatan teknis: offset `Position` yang di-skala `UIScale` itu ambigu di Roblox, jadi clamp-nya
+nggak nebak — dia geser, ukur hasil aslinya, terus koreksi sisa error pakai faktor hasil ukur.
+Diuji di harness 2 semantik (offset di-skala / 1:1), dua-duanya lolos.
+
+
 ## Branding
 
 - **Splash screen dihapus** — layar putih + logo "Aeris. / All for you" yang muncul 6 detik

@@ -352,16 +352,42 @@ local function CreateAerisLibrary()
         lib.AutoFitHP = true
         lib.UserScale = 1
 
+        local DESIGN_W, DESIGN_H = 690, 470 -- ukuran asli window (px desain)
+
         function lib:ApplyUIScale()
             local fit = 1
             if lib.AutoFitHP then
                 local camScale = workspace.CurrentCamera
                 local vp = (camScale and camScale.ViewportSize) or Vector2.new(1280, 720)
-                -- 760x540 = ukuran desain + margin sedikit. Fit cuma ngecil (max 1),
-                -- jadi di PC tampilannya tetap sama kayak aslinya.
-                fit = math.min(1, math.min(vp.X / 760, vp.Y / 540))
+                local availX, availY = vp.X, vp.Y
+                -- Kurangi top bar + chat button: window ini IgnoreGuiInset, jadi
+                -- tanpa ini header-nya ketutup bar Roblox di HP.
+                pcall(function()
+                    local inset = game:GetService("GuiService"):GetGuiInset()
+                    availX = math.max(160, vp.X - inset.X * 2)
+                    availY = math.max(120, vp.Y - inset.Y * 2)
+                end)
+                -- Window boleh makan maks 88% lebar & 82% tinggi area kepake, jadi
+                -- selalu ada margin. Fit cuma ngecil (max 1): di PC tetap kayak aslinya.
+                fit = math.min(1, (availX * 0.88) / DESIGN_W, (availY * 0.82) / DESIGN_H)
             end
-            uiScale.Scale = math.clamp(fit * (lib.UserScale or 1), 0.35, 1.6)
+            uiScale.Scale = math.clamp(fit * (lib.UserScale or 1), 0.30, 1.6)
+            -- Skala berubah = ukuran window di layar berubah, jadi window yang tadinya
+            -- pas bisa jadi udah lewat bibir layar. Clamp ulang posisinya (helper-nya
+            -- didefinisiin di bawah, makanya dicek dulu biar aman saat load awal).
+            if lib.KeepWindowOnScreen then
+                pcall(function() lib:KeepWindowOnScreen() end)
+            end
+        end
+
+        -- Angka ini dilaporin lewat notifikasi tiap kali skala berubah: tanpa ini
+        -- susah nebak device-nya butuh berapa persen.
+        function lib:UIScaleInfo()
+            local camScale = workspace.CurrentCamera
+            local vp = (camScale and camScale.ViewportSize) or Vector2.new(0, 0)
+            local sc = uiScale.Scale or 1
+            return string.format("scale %.0f%% | layar %dx%d | window %.0fx%.0f px",
+                sc * 100, vp.X, vp.Y, DESIGN_W * sc, DESIGN_H * sc)
         end
         lib:ApplyUIScale()
         pcall(function()
@@ -372,6 +398,81 @@ local function CreateAerisLibrary()
                 end)
             end
         end)
+
+        -- ===== ANTI WINDOW NYANGKUT DI LUAR LAYAR =====
+        -- Dulu window bisa di-drag sampai header-nya lewat atas layar. Begitu header
+        -- hilang, udah nggak ada bagian yang bisa dipegang buat narik balik, jadi
+        -- satu-satunya jalan adalah re-execute script. Sekarang tiap geser / resize /
+        -- perubahan skala posisinya di-clamp, dan "Lock GUI" beneran ngunci drag.
+        local WIN_EDGE_MARGIN = 6 -- jarak minimal window ke pinggir layar (px)
+        local winLocked = false   -- di-set lewat window:SetLocked()
+
+        local function frameUiScale(frame)
+            local s = frame:FindFirstChildOfClass("UIScale")
+            return math.max((s and s.Scale) or 1, 0.05)
+        end
+
+        -- Geser frame sejauh (dx, dy) piksel LAYAR. UIScale bikin offset Position ikut
+        -- di-skala, tapi itu jangan diasumsiin: geser pakai tebakan skala, ukur hasil
+        -- aslinya lewat AbsolutePosition, lalu koreksi sisanya pakai faktor hasil ukur.
+        local function shiftByScreenPixels(frame, dx, dy)
+            if math.abs(dx) < 0.5 and math.abs(dy) < 0.5 then return end
+
+            local sc = frameUiScale(frame)
+            local before = frame.AbsolutePosition
+            local p0 = frame.Position
+            local stepX = (math.abs(dx) >= 0.5) and (dx / sc) or 0
+            local stepY = (math.abs(dy) >= 0.5) and (dy / sc) or 0
+
+            frame.Position = UDim2.new(p0.X.Scale, p0.X.Offset + stepX, p0.Y.Scale, p0.Y.Offset + stepY)
+
+            local after = frame.AbsolutePosition
+            local movedX, movedY = after.X - before.X, after.Y - before.Y
+            local errX, errY = dx - movedX, dy - movedY
+            if math.abs(errX) < 0.5 and math.abs(errY) < 0.5 then return end
+
+            -- px layar per 1 satuan offset — dari hasil ukur, bukan tebakan
+            local kx = (math.abs(stepX) > 0.001) and (movedX / stepX) or sc
+            local ky = (math.abs(stepY) > 0.001) and (movedY / stepY) or sc
+            if math.abs(kx) < 0.05 then kx = sc end
+            if math.abs(ky) < 0.05 then ky = sc end
+
+            local p1 = frame.Position
+            frame.Position = UDim2.new(
+                p1.X.Scale, p1.X.Offset + errX / kx,
+                p1.Y.Scale, p1.Y.Offset + errY / ky
+            )
+        end
+
+        -- Paksa frame tetap utuh di dalam viewport. Kalau frame-nya lebih gede dari layar
+        -- (misal window udah di-zoom gede), dia dipaku ke pinggir atas/kiri supaya bagian
+        -- header-nya — satu-satunya tempat buat drag — tetap kelihatan dan kejangkau.
+        local function keepOnScreen(frame, margin)
+            local camScale = workspace.CurrentCamera
+            local vp = (camScale and camScale.ViewportSize) or Vector2.new(1280, 720)
+            local m = margin or WIN_EDGE_MARGIN
+            local ap = frame.AbsolutePosition
+            local as = frame.AbsoluteSize
+
+            local function fixAxis(a, size, vpSize)
+                local maxA = vpSize - m - size
+                if maxA < m then return m - a end -- lebih gede dari layar: paku kiri/atas
+                if a < m then return m - a end
+                if a > maxA then return maxA - a end
+                return 0
+            end
+
+            shiftByScreenPixels(frame, fixAxis(ap.X, as.X, vp.X), fixAxis(ap.Y, as.Y, vp.Y))
+        end
+
+        function lib:KeepWindowOnScreen()
+            keepOnScreen(mainFrame)
+        end
+
+        function lib:ResetWindowPosition()
+            mainFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
+            keepOnScreen(mainFrame)
+        end
 
         local mainCorner = Instance.new("UICorner")
         mainCorner.CornerRadius = UDim.new(0, 14)
@@ -482,10 +583,11 @@ local function CreateAerisLibrary()
         closeCorner.CornerRadius = UDim.new(0, 6)
         closeCorner.Parent = closeBtn
 
-        -- Smooth Dragging
+        -- Smooth Dragging (di-clamp biar nggak keluar layar, dan dilock pas Lock GUI ON)
         local isDragging = false
         local dragStart, startPos
         header.InputBegan:Connect(function(input)
+            if winLocked then return end
             if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
                 isDragging = true
                 dragStart = input.Position
@@ -498,9 +600,12 @@ local function CreateAerisLibrary()
             end
         end)
         UserInputService.InputChanged:Connect(function(input)
-            if isDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            if isDragging and not winLocked and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
                 local delta = input.Position - dragStart
                 mainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+                -- begitu header lewat bibir layar, nggak ada lagi pegangan buat narik
+                -- window balik — jadi ditahan di dalam viewport
+                keepOnScreen(mainFrame)
             end
         end)
 
@@ -639,6 +744,7 @@ local function CreateAerisLibrary()
         local isResizing = false
         local resizeStartMouse, resizeStartSize
         resizeGrip.InputBegan:Connect(function(input)
+            if winLocked then return end
             if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
                 isResizing = true
                 resizeStartMouse = input.Position
@@ -651,12 +757,14 @@ local function CreateAerisLibrary()
             end
         end)
         UserInputService.InputChanged:Connect(function(input)
-            if isResizing and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            if isResizing and not winLocked and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
                 local delta = input.Position - resizeStartMouse
                 -- Limits: Min width 580px, Max width 1100px; Min height 380px, Max height 750px
                 local newW = math.clamp(resizeStartSize.X + delta.X, 580, 1100)
                 local newH = math.clamp(resizeStartSize.Y + delta.Y, 380, 750)
                 mainFrame.Size = UDim2.new(0, newW, 0, newH)
+                -- gedein window bisa bikin sisi kanan/bawahnya lewat layar
+                keepOnScreen(mainFrame)
             end
         end)
 
@@ -787,6 +895,9 @@ local function CreateAerisLibrary()
                             startPosMT.Y.Scale,
                             startPosMT.Y.Offset + delta.Y
                         )
+                        -- tombol buka menu ini juga dijaga: kalau dia hilang keluar layar,
+                        -- menu udah nggak bisa dibuka lagi dari HP
+                        keepOnScreen(mobileToggle, 4)
                     end
                 end
             end
@@ -828,8 +939,27 @@ local function CreateAerisLibrary()
             end
         end
 
+        -- Balikin ukuran window ke ukuran desain (690x470). Perlu karena resize grip
+        -- nggak punya jalan balik: begitu ditarik gede, ukurannya nempel sampai
+        -- script di-execute ulang.
+        function window:ResetWindowSize()
+            local target = originalSize
+            if window.IsMinimized then
+                target = UDim2.new(originalSize.X.Scale, originalSize.X.Offset, 0, 52)
+            end
+            mainFrame.Size = target
+            keepOnScreen(mainFrame)
+        end
+
+        -- Lock GUI: beneran ngunci drag + resize. Sebelumnya cuma nyimpen flag yang
+        -- nggak ada satu pun pengeceknya, jadi toggle-nya kelihatan nyala padahal
+        -- window masih bisa digeser-geser.
         function window:SetLocked(bool)
-            window.IsLocked = bool
+            window.IsLocked = bool == true
+            winLocked = bool == true
+            if resizeGrip then
+                resizeGrip.Visible = not winLocked
+            end
         end
 
         function window:SetAlwaysShowMobileButton(bool)
@@ -16720,6 +16850,11 @@ end, {Flag = "ToggleTransparancy"})
 
 AppearanceCard:AddToggle("Lock GUI", false, function(arg)
     v:SetLocked(arg)
+    lib:Notify({
+        Title = "Lock GUI",
+        Description = arg and "ON — window nggak bisa digeser/di-resize" or "OFF — window bisa digeser",
+        Duration = 2,
+    })
 end, {Flag = "LockGui"})
 
 AppearanceCard:AddToggle("Watermark", false, function(arg)
@@ -16733,17 +16868,36 @@ end, {Flag = "AlwaysMobileButton"})
 AppearanceCard:AddToggle("Auto Fit Layar (HP)", true, function(arg)
     lib.AutoFitHP = arg
     if lib.ApplyUIScale then lib:ApplyUIScale() end
+    if lib.UIScaleInfo then
+        lib:Notify({ Title = "UI Scale", Description = lib:UIScaleInfo(), Duration = 4 })
+    end
 end, {Flag = "AutoFitHP"})
 
-AppearanceCard:AddSlider("UI Scale (%)", 50, 160, 100, function(arg)
+AppearanceCard:AddSlider("UI Scale (%)", 30, 160, 100, function(arg)
     lib.UserScale = arg / 100
     if lib.ApplyUIScale then lib:ApplyUIScale() end
+    if lib.UIScaleInfo then
+        lib:Notify({ Title = "UI Scale", Description = lib:UIScaleInfo(), Duration = 3 })
+    end
 end, {Increment = 5, Flag = "UIScaleManual"})
 
 AppearanceCard:AddButton("Reset Ukuran Window & Skala", function()
     lib.AutoFitHP = true
     lib.UserScale = 1
+    if v.ResetWindowSize then v:ResetWindowSize() end
     if lib.ApplyUIScale then lib:ApplyUIScale() end
+    if lib.UIScaleInfo then
+        lib:Notify({ Title = "UI Scale", Description = lib:UIScaleInfo(), Duration = 4 })
+    end
+end)
+
+AppearanceCard:AddButton("Balikin Window ke Tengah", function()
+    v:ResetWindowPosition()
+    lib:Notify({
+        Title = "Posisi Window",
+        Description = "Window ditaruh balik ke tengah layar",
+        Duration = 2,
+    })
 end)
 
 local Config = S_Page1:CreateSection("Config", "sliders-vertical")
