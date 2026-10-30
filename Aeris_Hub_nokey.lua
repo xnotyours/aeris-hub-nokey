@@ -22,7 +22,7 @@ _G.AerisSessionTimestamp = os.time()
 -- Build tag. Executor sering nge-cache hasil game:HttpGet, jadi gampang ketipu:
 -- script kelihatan "udah di-update" padahal yang jalan masih versi lama. Tag ini
 -- muncul di notifikasi startup, jadi ketahuan versi mana yang beneran jalan.
-local AERIS_BUILD = "vd-2.0"
+local AERIS_BUILD = "vd-2.1"
 
 -- Helper: Get Safe GUI Parent (Executors / CoreGui / PlayerGui)
 local function GetGuiParent()
@@ -5218,11 +5218,16 @@ do
                 end)
             end
 
-            lib:Notify({
-                Title = "Teleport",
-                Description = tpCfg.Safe and "Success! (safe)" or "Success!",
-                Duration = 1,
-            })
+            -- Auto Farm pumpkin nge-TP tiap <1 detik; kalau tiap hop muncul notif,
+            -- layarnya kebanjiran. Loop-nya nyalain tpCfg.Silent, dan di sini notif
+            -- dilewatin. Default-nya nil, jadi jalur TP lain nggak berubah sama sekali.
+            if not tpCfg.Silent then
+                lib:Notify({
+                    Title = "Teleport",
+                    Description = tpCfg.Safe and "Success! (safe)" or "Success!",
+                    Duration = 1,
+                })
+            end
         end
     end
 
@@ -16925,6 +16930,203 @@ MapCard:AddButton("Refresh Map", function()
     ForceRefreshMap()
     lib:Notify({Title = "Map", Description = "Refreshed!", Duration = 2})
 end)
+
+-- ===== F7: AUTO FARM PUMPKIN =====
+-- Catatan penting soal mekanik: di script ini (dan di seluruh source VD yang kebaca)
+-- TIDAK ada ProximityPrompt, ClickDetector, maupun atribut CheckInterractable buat
+-- "collect". Artinya cara pumpkin diambil nggak bisa dipastiin dari luar game.
+-- Jadi loop ini kerja di dua jalur sekaligus, dan dua-duanya di-feature-detect:
+--   1. teleport ke tiap pumpkin (kalau koleksinya auto lewat sentuhan, ini cukup)
+--   2. kalau ketemu ProximityPrompt / ClickDetector di pohon objeknya, dipicu juga
+-- Kalau di game ternyata butuh aksi lain, tinggal tambahin jalur ketiga di tryInteract.
+do
+    local farm = {
+        running = false,
+        list = {},
+        index = 1,
+        emptyPass = 0,
+    }
+
+    local function characterRoot()
+        local char = localPlayer and localPlayer.Character
+        return char and char:FindFirstChild("HumanoidRootPart")
+    end
+
+    -- Daftar target dibangun sekali per putaran, bukan tiap hop: fn2(true) itu
+    -- GetDescendants() seluruh workspace, kalau dipanggil tiap 0.8 detik FPS-nya ancur.
+    local function buildList()
+        fn2(true)
+
+        local me = characterRoot()
+        local origin = me and me.Position
+        local out = {}
+
+        for _, obj in ipairs(tbl4.Pumpkins) do
+            if obj and obj.Parent then
+                local part = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
+
+                if part then
+                    table.insert(out, {
+                        model = obj,
+                        part = part,
+                        dist = origin and (part.Position - origin).Magnitude or 0,
+                    })
+                end
+            end
+        end
+
+        table.sort(out, function(a, b) return a.dist < b.dist end)
+        return out
+    end
+
+    -- Coba picu pengambilan. urutannya sengaja: fireproximityprompt (kalau executor
+    -- nyediain) lebih andal daripada InputHold manual, dan ClickDetector terakhir
+    -- karena paling jarang dipakai game modern.
+    local function tryInteract(model)
+        local prompt = model:FindFirstChildWhichIsA("ProximityPrompt", true)
+
+        if prompt then
+            if type(fireproximityprompt) == "function" then
+                pcall(function() fireproximityprompt(prompt) end)
+            else
+                pcall(function()
+                    prompt:InputHoldBegin()
+                    task.wait(math.max(prompt.HoldDuration or 0, 0.05))
+                    prompt:InputHoldEnd()
+                end)
+            end
+            return "prompt"
+        end
+
+        local click = model:FindFirstChildWhichIsA("ClickDetector", true)
+
+        if click and type(fireclickdetector) == "function" then
+            pcall(function() fireclickdetector(click) end)
+            return "click"
+        end
+
+        return nil
+    end
+
+    local farmSection = EspPage:CreateSection("Pumpkin Farm", "gauge")
+
+    local farmToggle
+    farmToggle = farmSection:AddToggle("Auto Farm Pumpkin", false, function(on)
+        farm.running = on == true
+
+        if not farm.running then
+            _G.Ox.Teleport.Silent = false
+            return
+        end
+
+        farm.index = 1
+        farm.list = {}
+        farm.emptyPass = 0
+
+        task.spawn(function()
+            while farm.running and _G.Ox.ScriptAlive do
+                if farm.index > #farm.list then
+                    farm.list = buildList()
+                    farm.index = 1
+
+                    if #farm.list == 0 then
+                        farm.emptyPass = farm.emptyPass + 1
+
+                        -- jangan auto-matiin: map bisa belum ke-load / pumpkin belum
+                        -- spawn. Tapi jangan juga spam scan tiap 0.8s.
+                        if farm.emptyPass == 1 then
+                            lib:Notify({
+                                Title = "Pumpkin Farm",
+                                Description = "Belum ada pumpkin ke-detect -- nyoba terus tiap 5 detik",
+                                Duration = 4,
+                            })
+                        end
+
+                        for _ = 1, 25 do
+                            if not farm.running then return end
+                            task.wait(0.2)
+                        end
+                        continue
+                    end
+
+                    farm.emptyPass = 0
+                end
+
+                local target = farm.list[farm.index]
+                farm.index = farm.index + 1
+
+                if target and target.model and target.model.Parent and target.part and target.part.Parent then
+                    _G.Ox.Teleport.Silent = true
+                    fn3(target.part)
+                    _G.Ox.Teleport.Silent = false
+
+                    tryInteract(target.model)
+                    task.wait(_G.Ox.PumpkinFarmDelay or 0.8)
+                end
+            end
+
+            _G.Ox.Teleport.Silent = false
+        end)
+    end, { Flag = "FarmPumpkin" })
+
+    farmSection:AddSlider("Farm Delay", 0.2, 3, 0.8, function(sec)
+        _G.Ox.PumpkinFarmDelay = sec
+    end, { Increment = 0.1, Flag = "FarmPumpkinDelay" })
+
+    farmSection:AddButton("Stop Farm", function()
+        farm.running = false
+        _G.Ox.Teleport.Silent = false
+
+        if farmToggle and farmToggle:GetValue() then
+            farmToggle:SetValue(false)
+        end
+
+        lib:Notify({ Title = "Pumpkin Farm", Description = "Dihentikan", Duration = 1.5 })
+    end)
+
+    farmSection:AddButton("Probe Pumpkin (Console)", function()
+        fn2(true)
+
+        local total = #tbl4.Pumpkins
+        print("[Aeris Hub] ===== PROBE PUMPKIN =====")
+        print("kandidat objek: " .. total)
+
+        for i, obj in ipairs(tbl4.Pumpkins) do
+            local part = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
+            print(string.format("%d. %s (%s) part=%s", i, obj:GetFullName(), obj.ClassName, tostring(part ~= nil)))
+
+            local prompt = obj:FindFirstChildWhichIsA("ProximityPrompt", true)
+            local click = obj:FindFirstChildWhichIsA("ClickDetector", true)
+            print(string.format("   ProximityPrompt=%s  ClickDetector=%s", tostring(prompt ~= nil), tostring(click ~= nil)))
+
+            for _, attr in ipairs({ "action", "special", "EquippedItem" }) do
+                local v = obj:GetAttribute(attr)
+                if v ~= nil then
+                    print(string.format("   atribut %s = %s", attr, tostring(v)))
+                end
+            end
+        end
+
+        -- Yang paling nentuin: pas character lagi nempel pumpkin, game nulis apa di
+        -- CheckInterractable? Dari situ ketahuan aksi apa yang harus dipicu.
+        local char = localPlayer and localPlayer.Character
+        local ci = char and char:FindFirstChild("CheckInterractable")
+
+        if ci then
+            print("CheckInterractable atribut (posisi sekarang):")
+            for k, v in pairs(ci:GetAttributes()) do
+                print(string.format("   %s = %s", k, tostring(v)))
+            end
+        end
+
+        print("==================================")
+        lib:Notify({
+            Title = "Probe Pumpkin",
+            Description = "Hasilnya di console (F9) -- kirim ke aku",
+            Duration = 4,
+        })
+    end)
+end
 
 local Information = EspPage:CreateSection("Information", "info")
 NextKillerCard = Information
