@@ -103,6 +103,20 @@ local function CreateAerisLibrary()
         return localPlayer:WaitForChild("PlayerGui")
     end
 
+    -- Re-inject guard: script ini sering di-execute ulang buat balikin keadaan (misal
+    -- window lagi nyangkut). Tanpa ini GUI lama tetap nempel di CoreGui, jadi numpuk —
+    -- window lama yang udah di luar layar pun masih hidup di belakang.
+    pcall(function()
+        local parent = GetSafeGuiParent()
+        for _, child in ipairs(parent:GetChildren()) do
+            if child:IsA("ScreenGui") and (child.Name == "Aeris_MainHub"
+                or child.Name == "Aeris_Notifications"
+                or child.Name == "Aeris_Watermark") then
+                child:Destroy()
+            end
+        end
+    end)
+
     -- 60 FPS Iridescent Violet & White Shimmer Animation Loop
     RunService.RenderStepped:Connect(function()
         local rot = (tick() * 65) % 360

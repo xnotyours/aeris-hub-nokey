@@ -76,6 +76,8 @@ script. Sekarang:
   (dulu resize nggak punya jalan balik sama sekali).
 - Tombol buka menu di HP (floating button) juga di-clamp — nggak bisa lagi ditarik ke
   luar layar sampai menunya nggak bisa dibuka.
+- **Re-inject bersih** — execute ulang script sekarang ngebuang GUI lama dulu
+  (`Aeris_MainHub`, notifikasi, watermark), jadi nggak numpuk kalau lagi balikin keadaan.
 
 Catatan teknis: offset `Position` yang di-skala `UIScale` itu ambigu di Roblox, jadi clamp-nya
 nggak nebak — dia geser, ukur hasil aslinya, terus koreksi sisa error pakai faktor hasil ukur.
