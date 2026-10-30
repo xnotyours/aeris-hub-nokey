@@ -22,7 +22,7 @@ _G.AerisSessionTimestamp = os.time()
 -- Build tag. Executor sering nge-cache hasil game:HttpGet, jadi gampang ketipu:
 -- script kelihatan "udah di-update" padahal yang jalan masih versi lama. Tag ini
 -- muncul di notifikasi startup, jadi ketahuan versi mana yang beneran jalan.
-local AERIS_BUILD = "vd-2.3"
+local AERIS_BUILD = "vd-2.4"
 
 -- Helper: Get Safe GUI Parent (Executors / CoreGui / PlayerGui)
 local function GetGuiParent()
@@ -5111,6 +5111,23 @@ do
 
     local n2 = 0
 
+    -- Deteksi pumpkin. Jalur utama: folder wadahnya. Rekaman probe di device Zeys
+    -- nunjukin semua pumpkin ada di Workspace.Map.Pumpkins sebagai Pumpkin1/2/3 --
+    -- ngikutin folder itu jauh lebih pasti daripada nebak dari nama instance-nya.
+    -- Pencocokan nama tetap dipakai sebagai cadangan kalau layout map berubah.
+    isPumpkin = function(obj)
+        if not obj or not obj:IsA("Model") then
+            return false
+        end
+
+        local parent = obj.Parent
+        if parent and string.lower(parent.Name) == "pumpkins" then
+            return true
+        end
+
+        return string.find(string.lower(obj.Name), "pumpkin", 1, true) ~= nil
+    end
+
     fn2 = function(arg)
         if not arg and tick() - n2 < 2 then
             return
@@ -5178,11 +5195,7 @@ do
 
             if v5:IsA("Model") and string.match(string.lower(v5.Name), "^scp") and not table.find(tbl4.SCPs, v5) then
                 table.insert(tbl4.SCPs, v5)
-            elseif v5:IsA("Model") and string.find(string.lower(v5.Name), "pumpkin", 1, true) and not table.find(tbl4.Pumpkins, v5) then
-                -- Nama instance pumpkin nggak bisa dipastiin tanpa masuk ke game: toggle
-                -- "Pumpkin ESP" di hub pembanding ternyata nggak pernah dibaca sama logika
-                -- ESP-nya (cuma nulis flag, nggak ada yang baca). Jadi di sini dipakai
-                -- pencocokan longgar: nama apa pun yang mengandung "pumpkin".
+            elseif v5:IsA("Model") and isPumpkin(v5) and not table.find(tbl4.Pumpkins, v5) then
                 table.insert(tbl4.Pumpkins, v5)
             end
         end
@@ -16966,6 +16979,8 @@ do
         list = {},
         index = 1,
         emptyPass = 0,
+        taken = 0,
+        visited = 0,
     }
 
     local probe = { running = false }
@@ -17000,6 +17015,99 @@ do
 
         table.sort(out, function(a, b) return a.dist < b.dist end)
         return out
+    end
+
+    -- Tombol aksi bawaan game. Path-nya sama kayak yang dipakai Auto Parry V2 di script
+    -- ini (PlayerGui.Survivor-mob.Controls.Gui-mob, plus varian namanya), jadi nggak
+    -- nebak-nebak nama baru.
+    local function findActionButton()
+        local pg = localPlayer:FindFirstChild("PlayerGui")
+        if not pg then return nil end
+
+        for _, path in ipairs({
+            { "Survivor-mob", "Controls", "Gui-mob" },
+            { "SurvivorMob", "Controls", "GuiMob" },
+            { "Survivor-mob", "Controls", "GuiMob" },
+        }) do
+            local node = pg
+
+            for _, name in ipairs(path) do
+                node = node and node:FindFirstChild(name)
+            end
+
+            if node and node:IsA("GuiObject") then
+                return node
+            end
+        end
+
+        return nil
+    end
+
+    local function fireButton(btn)
+        if not btn then return false end
+
+        if type(firesignal) == "function" then
+            local ok = pcall(function()
+                firesignal(btn.MouseButton1Down)
+                task.delay(0.06, function()
+                    pcall(function()
+                        firesignal(btn.MouseButton1Up)
+                        if btn.MouseButton1Click then
+                            firesignal(btn.MouseButton1Click)
+                        end
+                    end)
+                end)
+            end)
+            if ok then return true end
+        end
+
+        -- Fallback tanpa executor: klik di posisi layar tombolnya. Dipakai Aeris juga
+        -- di Auto Parry V2.
+        return (pcall(function()
+            local pos = btn.AbsolutePosition
+            local size = btn.AbsoluteSize
+            local x = pos.X + size.X / 2
+            local y = pos.Y + size.Y / 2
+            VirtualInputManager:SendMouseButtonEvent(x, y, 1, true, game, 0)
+            task.delay(0.06, function()
+                VirtualInputManager:SendMouseButtonEvent(x, y, 1, false, game, 0)
+            end)
+        end))
+    end
+
+    -- Nudge ke dalam pumpkin-nya. Ini inti perbaikannya: TP + offset HeightOffset itu
+    -- mendarat 3 stud DI ATAS pumpkin, dan itu belum tentu bikin karakter bersentuhan.
+    -- Bukti dari rekaman probe: pumpkin lepas justru pas karakternya nembus/kesenggol.
+    local function touchPart(part)
+        local char = localPlayer.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if not hrp or not part then return end
+
+        -- Safe Teleport bikin karakter nggak nyangkut di dalam prop pas didorong keluar
+        -- sama physics setelah kontaknya kejadian.
+        local uncollided = {}
+        if _G.Ox.Teleport.Safe and char then
+            for _, p in ipairs(char:GetDescendants()) do
+                if p:IsA("BasePart") and p.CanCollide then
+                    p.CanCollide = false
+                    table.insert(uncollided, p)
+                end
+            end
+        end
+
+        pcall(function()
+            hrp.CFrame = part.CFrame + Vector3.new(0, _G.Ox.PumpkinTouchOffset or 0.5, 0)
+        end)
+
+        if #uncollided > 0 then
+            task.delay(0.25, function()
+                for _, p in ipairs(uncollided) do
+                    pcall(function()
+                        if p.Parent then p.CanCollide = true end
+                    end)
+                end
+            end)
+        end
     end
 
     -- Coba picu pengambilan. urutannya sengaja: fireproximityprompt (kalau executor
@@ -17073,18 +17181,54 @@ do
                     end
 
                     farm.emptyPass = 0
+
+                    -- Laporan per putaran. Kalau seputaran nol yang keambil, itu sinyal
+                    -- penting: TP-nya jalan tapi kontaknya nggak nyampe, dan user harus
+                    -- tau itu bukannya nunggu tanpa hasil.
+                    if farm.visited > 0 then
+                        lib:Notify({
+                            Title = "Pumpkin Farm",
+                            Description = string.format("%d dari %d pumpkin keambil", farm.taken, farm.visited),
+                            Duration = 3,
+                        })
+
+                        if farm.taken < farm.visited then
+                            lib:Notify({
+                                Title = "Pumpkin Farm",
+                                Description = "Ada yang belum keambil -- coba naikin Farm Delay, atau nyalain Tombol Interaksi",
+                                Duration = 5,
+                            })
+                        end
+                    end
+
+                    farm.visited = 0
+                    farm.taken = 0
                 end
 
                 local target = farm.list[farm.index]
                 farm.index = farm.index + 1
 
                 if target and target.model and target.model.Parent and target.part and target.part.Parent then
+                    farm.visited = farm.visited + 1
+
                     _G.Ox.Teleport.Silent = true
                     fn3(target.part)
                     _G.Ox.Teleport.Silent = false
+                    touchPart(target.part)
 
                     tryInteract(target.model)
+
+                    if _G.Ox.PumpkinTryButton then
+                        fireButton(findActionButton())
+                    end
+
                     task.wait(_G.Ox.PumpkinFarmDelay or 0.8)
+
+                    -- Dicek SETELAH jeda: kalau model-nya udah lepas dari map, berarti
+                    -- keambil. Dipakai buat laporan, bukan buat nebak-nebak.
+                    if not target.model.Parent then
+                        farm.taken = farm.taken + 1
+                    end
                 end
             end
 
@@ -17095,6 +17239,28 @@ do
     farmSection:AddSlider("Farm Delay", 0.2, 3, 0.8, function(sec)
         _G.Ox.PumpkinFarmDelay = sec
     end, { Increment = 0.1, Flag = "FarmPumpkinDelay" })
+
+    -- Offset khusus farm, kepisah dari Height Offset TP: yang ini nentuin seberapa
+    -- dalem karakter dimasukin ke pumpkin buat jamin kontak. 0.5 = hampir pas di titik
+    -- pusatnya, cukup buat kesenggol tapi nggak bikin karakter nyangkut lama.
+    farmSection:AddSlider("Touch Offset", 0, 5, 0.5, function(studs)
+        _G.Ox.PumpkinTouchOffset = studs
+    end, { Increment = 0.1, Flag = "PumpkinTouchOffset" })
+
+    -- Default OFF dan sengaja: tombol aksi game itu tombol serbaguna -- kalau di deket
+    -- pumpkin ada jendela/pallet, yang kepicu bisa vault, bukan ambil pumpkin.
+    -- Nyalain cuma kalau ternyata kontak fisik doang nggak cukup.
+    farmSection:AddToggle("Coba Tombol Interaksi", false, function(on)
+        _G.Ox.PumpkinTryButton = on == true
+
+        lib:Notify({
+            Title = "Pumpkin Farm",
+            Description = on
+                and "ON -- tombol aksi game ikut dipencet tiap hop (hati-hati kalau deket jendela)"
+                or "OFF -- cuma kontak fisik",
+            Duration = 3,
+        })
+    end, { Flag = "PumpkinTryButton" })
 
     farmSection:AddButton("Stop Farm", function()
         farm.running = false
