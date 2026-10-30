@@ -22,7 +22,7 @@ _G.AerisSessionTimestamp = os.time()
 -- Build tag. Executor sering nge-cache hasil game:HttpGet, jadi gampang ketipu:
 -- script kelihatan "udah di-update" padahal yang jalan masih versi lama. Tag ini
 -- muncul di notifikasi startup, jadi ketahuan versi mana yang beneran jalan.
-local AERIS_BUILD = "vd-2.4"
+local AERIS_BUILD = "vd-2.5"
 
 -- Helper: Get Safe GUI Parent (Executors / CoreGui / PlayerGui)
 local function GetGuiParent()
@@ -17017,26 +17017,25 @@ do
         return out
     end
 
-    -- Tombol aksi bawaan game. Path-nya sama kayak yang dipakai Auto Parry V2 di script
-    -- ini (PlayerGui.Survivor-mob.Controls.Gui-mob, plus varian namanya), jadi nggak
-    -- nebak-nebak nama baru.
+    -- Tombol aksi game. Urutan ini nggak boleh diacak: yang beneran ngambil pumpkin itu
+    -- "action" (cadangan "check") di PlayerGui.Survivor-mob.Controls -- path yang sama
+    -- yang dipakai Auto Parry V2 buat mencet tombol aksi. "Gui-mob" taruh paling akhir
+    -- karena itu tombol gerak/vault, bukan ambil barang.
+    -- Visible dicek: game cuma nampilin tombolnya pas ada interactable di deket.
     local function findActionButton()
         local pg = localPlayer:FindFirstChild("PlayerGui")
         if not pg then return nil end
 
-        for _, path in ipairs({
-            { "Survivor-mob", "Controls", "Gui-mob" },
-            { "SurvivorMob", "Controls", "GuiMob" },
-            { "Survivor-mob", "Controls", "GuiMob" },
-        }) do
-            local node = pg
+        local mob = pg:FindFirstChild("Survivor-mob") or pg:FindFirstChild("SurvivorMob")
+        local controls = mob and mob:FindFirstChild("Controls")
 
-            for _, name in ipairs(path) do
-                node = node and node:FindFirstChild(name)
-            end
+        if controls then
+            for _, name in ipairs({ "action", "check", "Gui-mob", "GuiMob" }) do
+                local btn = controls:FindFirstChild(name)
 
-            if node and node:IsA("GuiObject") then
-                return node
+                if btn and btn:IsA("GuiObject") and btn.Visible then
+                    return btn
+                end
             end
         end
 
@@ -17218,7 +17217,12 @@ do
 
                     tryInteract(target.model)
 
-                    if _G.Ox.PumpkinTryButton then
+                    -- Tombol aksi dicet SETELAH jeda pendek. Dua sebabnya:
+                    -- (1) game baru nge-set interactPoint + nampilin tombolnya setelah
+                    --     karakter nyampe, jadi kalau dicet langsung tombolnya belum ada;
+                    -- (2) findActionButton nyaring pakai .Visible, yang artinya sama.
+                    if _G.Ox.PumpkinPressButton ~= false then
+                        task.wait(0.25)
                         fireButton(findActionButton())
                     end
 
@@ -17247,20 +17251,77 @@ do
         _G.Ox.PumpkinTouchOffset = studs
     end, { Increment = 0.1, Flag = "PumpkinTouchOffset" })
 
-    -- Default OFF dan sengaja: tombol aksi game itu tombol serbaguna -- kalau di deket
-    -- pumpkin ada jendela/pallet, yang kepicu bisa vault, bukan ambil pumpkin.
-    -- Nyalain cuma kalau ternyata kontak fisik doang nggak cukup.
-    farmSection:AddToggle("Coba Tombol Interaksi", false, function(on)
-        _G.Ox.PumpkinTryButton = on == true
+    -- Default ON: pumpkin diambil lewat tombol aksi, bukan cuma kesenggol. Tombolnya
+    -- serbaguna, jadi kalau lagi nempel jendela/pallet kadang yang kepicu vault --
+    -- matiin di sini kalau itu ganggu.
+    farmSection:AddToggle("Tekan Tombol Aksi", true, function(on)
+        _G.Ox.PumpkinPressButton = on == true
 
         lib:Notify({
             Title = "Pumpkin Farm",
             Description = on
-                and "ON -- tombol aksi game ikut dipencet tiap hop (hati-hati kalau deket jendela)"
+                and "ON -- tombol aksi game dicet tiap hop (ini yang ngambil pumpkin)"
                 or "OFF -- cuma kontak fisik",
             Duration = 3,
         })
-    end, { Flag = "PumpkinTryButton" })
+    end, { Flag = "PumpkinPressButton" })
+
+    -- Tes manual: berdiri di sebelah pumpkin, pencet ini. Kalau pumpkin-nya keambil,
+    -- berarti tombol yang aku targetin bener -- dan auto farm-nya bakal jalan juga.
+    -- Kalau nggak, berarti masih salah tombol, dan daftar di bawah yang dipakai.
+    farmSection:AddButton("Tes Tombol Aksi", function()
+        local btn = findActionButton()
+
+        if not btn then
+            lib:Notify({
+                Title = "Tombol Aksi",
+                Description = "Nggak ketemu / nggak visible. Deketin dulu ke pumpkin-nya",
+                Duration = 5,
+            })
+            return
+        end
+
+        local fired = fireButton(btn)
+        lib:Notify({
+            Title = "Tombol Aksi",
+            Description = (fired and "Dicet: " or "Gagal nyet: ") .. btn.Name ..
+                          " (" .. math.floor(btn.AbsoluteSize.X) .. "x" .. math.floor(btn.AbsoluteSize.Y) .. ")",
+            Duration = 5,
+        })
+    end)
+
+    -- Kalau "Tes Tombol Aksi" nggak ngambil apa-apa, daftar ini yang nunjukin tombol
+    -- mana saja yang ada di Controls + ukurannya, supaya bisa ditunjuk yang benar.
+    farmSection:AddButton("List Tombol Game (Copy)", function()
+        local lines = {}
+        local pg = localPlayer:FindFirstChild("PlayerGui")
+        local mob = pg and (pg:FindFirstChild("Survivor-mob") or pg:FindFirstChild("SurvivorMob"))
+        local controls = mob and mob:FindFirstChild("Controls")
+
+        if not controls then
+            lines = { "Controls nggak ketemu di PlayerGui" }
+        else
+            for _, child in ipairs(controls:GetDescendants()) do
+                if child:IsA("GuiObject") and child.Visible then
+                    table.insert(lines, string.format("%s (%s) %dx%d pos=%d,%d",
+                        child:GetFullName(), child.ClassName,
+                        math.floor(child.AbsoluteSize.X), math.floor(child.AbsoluteSize.Y),
+                        math.floor(child.AbsolutePosition.X), math.floor(child.AbsolutePosition.Y)))
+                end
+            end
+
+            if #lines == 0 then
+                lines = { "Nggak ada GuiObject visible di Controls" }
+            end
+        end
+
+        local copied = DumpReport("TOMBOL GAME (Controls)", lines)
+        lib:Notify({
+            Title = "Tombol Game",
+            Description = copied and "Di-copy ke clipboard -- kirim ke chat" or "Di-dump ke console",
+            Duration = 5,
+        })
+    end)
 
     farmSection:AddButton("Stop Farm", function()
         farm.running = false
