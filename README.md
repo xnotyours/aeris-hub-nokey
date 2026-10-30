@@ -4,7 +4,7 @@ Versi **tanpa key system** dari Aeris Hub VD. Key check (menu verifikasi, `REQUI
 file `Aeris/key_<userId>.json`, badge "Aeris Verified", countdown key di sidebar) sudah dibuang
 total — script langsung jalan begitu di-execute.
 
-- File: `Aeris_Hub_nokey.lua` (17.138 baris)
+- File: `Aeris_Hub_nokey.lua` (17.153 baris)
 - Platform: Roblox executor (butuh `require`, `firesignal`, `gethui`, `writefile`/`readfile` opsional)
 - Place: [BUTCHER] Violence District (PlaceId `93978595733734`)
 - UI: engine sendiri (nggak HttpGet library luar)
@@ -43,20 +43,24 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/xnotyours/aeris-hub-n
 Window-nya fixed 690x470 px, jadi di HP keliatan kebesaran sampai keluar layar. Sekarang
 ada `UIScale` di frame window + auto-fit:
 
-- **Zoom default** — HP **120%**, PC **100%** (1:1 kayak desain). Ini juga yang jadi angka
-  awal slider "UI Scale (%)". Window desain 690x470 px itu cuma ~35% lebar layar di HP
-  1080p+, makanya 100% kelihatan mini.
+- **Zoom default** — **120%** (semua platform, nggak lagi digantung di deteksi touch —
+  sebagian executor salah nge-set flag itu dan bikin default balik ke 100% diam-diam).
+  Window desain 690x470 px itu cuma ~35% lebar layar di HP 1080p+, makanya 100% kelihatan
+  mini. Ini juga yang jadi angka awal slider "UI Scale (%)".
 - **Auto Fit Layar (HP)** — default NYALA. Fungsinya cuma **mengecilkan**: kalau zoom
   pilihanmu nggak muat di layar (HP kecil), diturunin sampai muat. Jadi window nggak
   pernah lewat bibir layar, dan zoom default nggak bikin overflow. Batasnya: window boleh
   makan maks **95% lebar & 92% tinggi** area yang kepake.
-- **UI Scale (%)** — slider manual 30–160%, default 120% (HP) / 100% (PC).
-- **Reset Ukuran Window & Skala** — balikin auto-fit + zoom default platform.
+- **UI Scale (%)** — slider manual 30–160%, default 120%.
+- **Reset Ukuran Window & Skala** — balikin auto-fit + zoom default.
+- **Build tag** — notifikasi startup nampilin `Build vd-1.x | scale ..% | layar WxH |
+  window WxH px`. Ini buat mastiin versi yang jalan beneran versi baru (executor suka
+  nge-cache hasil `game:HttpGet`, jadi gampang ketipu "udah ke-update").
 - Auto-update kalau layar dirotasi / window di-resize (dengerin `ViewportSize`).
 
 Hitungan dari rumus (bukan test di device, cuma aritmatika):
 
-- PC 1280x720 → scale 1.000 (690x470 px)
+- PC 1280x720 → scale 1.200 (828x564 px)
 - HP 1920x888 → scale 1.200 (828x564 px) — dulu ke-cap di 1.000 (690x470 px)
 - HP 812x375 → scale 0.593 (409x279 px) — zoom default diturunin biar muat
 - HP kecil 480x260 → scale 0.368 (254x173 px)
