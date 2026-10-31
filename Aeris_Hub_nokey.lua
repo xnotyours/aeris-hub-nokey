@@ -22,7 +22,7 @@ _G.AerisSessionTimestamp = os.time()
 -- Build tag. Executor sering nge-cache hasil game:HttpGet, jadi gampang ketipu:
 -- script kelihatan "udah di-update" padahal yang jalan masih versi lama. Tag ini
 -- muncul di notifikasi startup, jadi ketahuan versi mana yang beneran jalan.
-local AERIS_BUILD = "vd-2.14"
+local AERIS_BUILD = "vd-2.15"
 
 -- Helper: Get Safe GUI Parent (Executors / CoreGui / PlayerGui)
 local function GetGuiParent()
@@ -15509,31 +15509,24 @@ AbilityCard:AddButton("Instant Escape", function()
     fn18()
 end)
 
--- ===== AUTO FARM EXP (server hop + menang instan) =====
+-- ===== AUTO FARM EXP (server hop + masuk gate) =====
 -- Loop penuh buat farming EXP:
 --   1. nunggu match. Match butuh 3 orang, jadi di server rame bisa kelamaan.
 --   2. kalau kelamaan nunggu, hop ke server Violence District yang SEPI (1-2 orang) --
 --      di situ yang kurang cuma 1 orang, jadi match-nya cepet mulai.
---   3. begitu Map muncul, langsung TP ke finish line: menang, tanpa nyentuh generator.
---      (mode "Langsung Menang"; mode "Setelah Gen Cukup" tetap ada buat cadangan.)
+--   3. begitu Map muncul, TP ke DALAM gate -> menang. Generator nggak disentuh, lever
+--      gate nggak dipencet, pintunya nggak dibuka. Cuma TP.
 --
--- Detail yang nggak boleh diubah:
---   - Lever gate dipicu lewat tombol aksi GUI (Survivor-mob.Controls.action), BUKAN
---     ProximityPrompt -- game ini nggak punya prompt sama sekali, sama kayak pumpkin.
---   - Yang dijaga jaraknya, bukan timer: ensureNear() nempel karakter ke lever sampai
---     radius-nya masuk, baru tombol dicet. Pelajaran dari bug pumpkin -- nyetel
---     0.15/0.5/0.8 itu cuma mindahin tebakan.
---   - Daftar generator di-cache per match, dan daftar server di-fetch maksimal sekali
---     per cooldown. GetDescendants() tiap 0.5 detik bikin FPS ancur.
+-- Kenapa nggak ada buka gate: yang diambil jalurnya cuma posisi. Lever + tombol aksi
+-- (yang dulu dipakai pumpkin farm) sengaja TIDAK dipakai di sini -- kalau TP-nya udah
+-- mendarat di dalam gate, nggak ada yang perlu dibuka.
+--
+-- Daftar server di-fetch maksimal sekali per cooldown: jangan nembak HTTP tiap tick.
 do
     local esc = {
         Enabled = false,
-        Mode = "Langsung Menang",
-        MinGens = 5,
-        OpenGate = true,
-        BypassDoor = true,
+        Target = "Gate Dulu, lalu Finish Line",
         SkipResults = true,
-        Radius = 5,
 
         HopEnabled = false,
         HopMax = 2,
@@ -15545,6 +15538,8 @@ do
 
         state = "idle",
         hopNote = nil,
+        announced = false,
+        retries = 0,
         busy = false,
         finished = false,
         handledMap = nil,
@@ -15727,165 +15722,7 @@ do
         hopTo(target)
     end
 
-    -- ================= INTERAKSI =================
-
-    local function distanceTo(part)
-        local hrp = characterRoot()
-
-        if not hrp or not part or not part.Parent then
-            return nil
-        end
-
-        return (hrp.Position - part.Position).Magnitude
-    end
-
-    -- Tempel karakter ke titik sampai beneran deket. Yang dijaga jaraknya; timeout cuma
-    -- batas nyerah, bukan penentu "udah sampe apa belum".
-    local function ensureNear(part, timeout)
-        local deadline = tick() + (timeout or 1.5)
-
-        while tick() < deadline do
-            local dist = distanceTo(part)
-
-            if dist and dist <= esc.Radius then
-                return true
-            end
-
-            fn3(part)
-            task.wait(0.08)
-        end
-
-        return false
-    end
-
-    -- Tombol aksi game. Urutan sama kayak Patch F7: "action" dulu, "Gui-mob" paling
-    -- akhir -- yang terakhir itu tombol gerak/vault, bukan interaksi.
-    local function findActionButton()
-        local pg = localPlayer:FindFirstChild("PlayerGui")
-        if not pg then
-            return nil
-        end
-
-        local mob = pg:FindFirstChild("Survivor-mob") or pg:FindFirstChild("SurvivorMob")
-        local controls = mob and mob:FindFirstChild("Controls")
-
-        if not controls then
-            return nil
-        end
-
-        for _, name in ipairs({ "action", "check", "Gui-mob", "GuiMob" }) do
-            local btn = controls:FindFirstChild(name)
-
-            if btn and btn:IsA("GuiObject") and btn.Visible then
-                return btn
-            end
-        end
-
-        return nil
-    end
-
-    local function fireButton(btn)
-        if not btn then
-            return false
-        end
-
-        if type(firesignal) == "function" then
-            local ok = pcall(function()
-                firesignal(btn.MouseButton1Down)
-
-                task.delay(0.06, function()
-                    pcall(function()
-                        firesignal(btn.MouseButton1Up)
-
-                        if btn.MouseButton1Click then
-                            firesignal(btn.MouseButton1Click)
-                        end
-                    end)
-                end)
-            end)
-
-            if ok then
-                return true
-            end
-        end
-
-        return (pcall(function()
-            local pos = btn.AbsolutePosition
-            local size = btn.AbsoluteSize
-            local x = pos.X + size.X / 2
-            local y = pos.Y + size.Y / 2
-
-            VirtualInputManager:SendMouseButtonEvent(x, y, 1, true, game, 0)
-
-            task.delay(0.06, function()
-                VirtualInputManager:SendMouseButtonEvent(x, y, 1, false, game, 0)
-            end)
-        end))
-    end
-
     -- ================= MAP =================
-
-    -- Daftar generator di-cache per match. GetDescendants() seluruh Map tiap 0.5 detik
-    -- itu yang bikin FPS ancur, jadi discan sekali per match -- abis itu cuma baca atribut.
-    -- Filternya "ada GeneratorBody", bukan "ada RepairProgress": atribut progress baru
-    -- muncul pas gen mulai dikerjain, jadi kalau difilter pakai itu gen yang belum disentuh
-    -- nggak kehitung dan totalnya salah.
-    local genCache = { map = nil, list = {} }
-
-    local function generators()
-        local map = workspace:FindFirstChild("Map")
-
-        if not map then
-            genCache.map, genCache.list = nil, {}
-            return genCache.list
-        end
-
-        if genCache.map ~= map then
-            local list = {}
-
-            for _, descendant in ipairs(map:GetDescendants()) do
-                if descendant:IsA("Model") and string.lower(descendant.Name) == "generator" then
-                    local body = descendant:FindFirstChild("GeneratorBody")
-                        or descendant:FindFirstChildWhichIsA("BasePart")
-
-                    if body then
-                        table.insert(list, descendant)
-                    end
-                end
-            end
-
-            genCache.map, genCache.list = map, list
-        end
-
-        return genCache.list
-    end
-
-    local function progressOf(model)
-        local value = model:GetAttribute("RepairProgress")
-            or model:GetAttribute("ProgressRepair")
-
-        if type(value) ~= "number" then
-            return 0
-        end
-
-        return value
-    end
-
-    local function genStatus()
-        local done, total = 0, 0
-
-        for _, model in ipairs(generators()) do
-            if model.Parent then
-                total = total + 1
-
-                if progressOf(model) >= 100 then
-                    done = done + 1
-                end
-            end
-        end
-
-        return done, total
-    end
 
     local function gates()
         local out = {}
@@ -15903,9 +15740,55 @@ do
         return out
     end
 
+    local function nearestGate()
+        local list = gates()
+        local hrp = characterRoot()
+
+        table.sort(list, function(a, b)
+            local pa = a:FindFirstChildWhichIsA("BasePart")
+            local pb = b:FindFirstChildWhichIsA("BasePart")
+            local da = (pa and hrp) and (pa.Position - hrp.Position).Magnitude or math.huge
+            local db = (pb and hrp) and (pb.Position - hrp.Position).Magnitude or math.huge
+
+            return da < db
+        end)
+
+        return list[1]
+    end
+
+    -- Titik "di dalam gate". Urutannya sengaja, dari yang paling spesifik:
+    --   1. tengah antara LeftGate dan RightGate -- itu mulut gateway-nya
+    --   2. pivot model-nya (kalau part-nya dinamain beda)
+    --   3. BasePart pertama yang ketemu
+    local function gateInsidePoint(gate)
+        if not gate then
+            return nil
+        end
+
+        local left = gate:FindFirstChild("LeftGate")
+        local right = gate:FindFirstChild("RightGate")
+
+        if left and right then
+            return (left.Position + right.Position) / 2
+        end
+
+        if type(gate.GetPivot) == "function" then
+            local ok, pivot = pcall(function()
+                return gate:GetPivot()
+            end)
+
+            if ok and pivot and pivot.Position then
+                return pivot.Position
+            end
+        end
+
+        local part = gate:FindFirstChildWhichIsA("BasePart")
+        return part and part.Position or nil
+    end
+
     -- Finish line-nya dicache dan discan maksimal sekali per 2 detik: nyari dia butuh
-    -- GetDescendants() seluruh workspace, dan di mode "Langsung Menang" ini dicek tiap
-    -- tick. Instance baru tiap match, jadi cache-nya kadaluarsa sendiri lewat cek Parent.
+    -- GetDescendants() seluruh workspace, dan dicek tiap tick. Instance baru tiap match,
+    -- jadi cache-nya kadaluarsa sendiri lewat cek Parent.
     local finishCache = { part = nil, nextScan = 0 }
 
     local function finishLine()
@@ -15932,33 +15815,6 @@ do
         return nil
     end
 
-    -- Duplikat sengaja dari "Bypass Exit Gate": jangan gantung ke callback toggle UI
-    -- kalau kerjanya bisa dilakuin langsung di sini.
-    local function openDoor(gate)
-        for _, name in ipairs({ "LeftGate", "RightGate" }) do
-            local leaf = gate:FindFirstChild(name)
-
-            if leaf then
-                leaf.CanCollide = false
-                leaf.Transparency = 1
-            end
-        end
-
-        local box = gate:FindFirstChild("Box")
-
-        if box then
-            box.CanCollide = false
-        end
-
-        for _, name in ipairs({ "LeftGate-end", "LeftGate-end2", "RightGate-end", "RightGate-end2" }) do
-            local cap = gate:FindFirstChild(name)
-
-            if cap then
-                cap.Transparency = 0
-            end
-        end
-    end
-
     -- Round kelar = Map ilang. Layar Results dipakai sebagai penanda kedua.
     local function escaped()
         if not workspace:FindFirstChild("Map") then
@@ -15974,11 +15830,27 @@ do
         return false
     end
 
-    local function tpFinishLine()
-        local part = finishLine()
+    local function tpTo(position)
         local hrp = characterRoot()
 
-        if not part or not hrp then
+        if not hrp or not position then
+            return false
+        end
+
+        hrp.CFrame = CFrame.new(position)
+        return true
+    end
+
+    local function tpFinishLine()
+        local part = finishLine()
+
+        if not part then
+            return false
+        end
+
+        local hrp = characterRoot()
+
+        if not hrp then
             return false
         end
 
@@ -15986,9 +15858,22 @@ do
         return true
     end
 
+    local function waitEscaped(seconds)
+        local deadline = tick() + seconds
+
+        while tick() < deadline do
+            if escaped() then
+                return true
+            end
+
+            task.wait(0.2)
+        end
+
+        return false
+    end
+
     -- ================= EKSEKUSI =================
 
-    -- Satu percobaan penuh: gate -> pintu -> finish line.
     local function escapeRun()
         if esc.busy then
             return
@@ -15998,87 +15883,69 @@ do
         esc.state = "jalan"
 
         local ok = false
+        local attempted = false   -- ada TP yang beneran kejadian di run ini
+        local missing = false     -- ada target yang dibutuhin tapi nggak ketemu
 
-        if esc.OpenGate then
-            -- Lever-nya nggak nunggu power kalau Instant TP Gate nyala.
-            pcall(function()
-                if InstantTPToggle and type(fn) == "function" then
-                    fn(InstantTPToggle, true)
-                end
-            end)
-
-            local list = gates()
-            local hrp = characterRoot()
-
-            -- Gate terdekat dulu.
-            table.sort(list, function(a, b)
-                local pa = a:FindFirstChildWhichIsA("BasePart")
-                local pb = b:FindFirstChildWhichIsA("BasePart")
-                local da = (pa and hrp) and (pa.Position - hrp.Position).Magnitude or math.huge
-                local db = (pb and hrp) and (pb.Position - hrp.Position).Magnitude or math.huge
-
-                return da < db
-            end)
-
-            local gate = list[1]
+        -- Tahap 1: masuk ke DALAM gate. Nggak ada lever yang dipencet, nggak ada pintu
+        -- yang dibuka -- posisinya doang yang dipindah ke tengah mulut gate-nya.
+        if esc.Target ~= "Cuma Finish Line" then
+            local gate = nearestGate()
 
             if gate then
-                say("buka gate dulu")
+                local point = gateInsidePoint(gate)
 
-                local lever = gate:FindFirstChild("ExitLever")
-                    or gate:FindFirstChildWhichIsA("BasePart")
-
-                if lever then
-                    for _ = 1, 3 do
-                        ensureNear(lever, 1.2)
-                        fireButton(findActionButton())
-                        task.wait(0.35)
+                if point then
+                    -- Notifnya cuma sekali per match: retry tiap tick bikin dia muncul
+                    -- terus dan nutupin info lain.
+                    if not esc.announced then
+                        esc.announced = true
+                        say("masuk gate")
                     end
-                end
 
-                if esc.BypassDoor then
-                    openDoor(gate)
+                    attempted = true
+                    tpTo(point)
+
+                    if waitEscaped(1.5) then
+                        ok = true
+                    end
+                else
+                    missing = true
+                    say("titik dalam gate nggak ketemu", 3)
                 end
             else
-                say("gate nggak ketemu - langsung ke finish line", 3)
-            end
-        elseif esc.BypassDoor then
-            for _, gate in ipairs(gates()) do
-                openDoor(gate)
+                missing = true
+                say("gate nggak ketemu", 3)
             end
         end
 
-        task.wait(0.3)
+        -- Tahap 2: finish line. Ini jalur yang sama dengan tombol "Instant Escape" bawaan
+        -- hub, jadi kalau TP ke dalam gate ternyata belum cukup, ini jaring keduanya.
+        if not ok and esc.Target ~= "Cuma Gate" then
+            for attempt = 1, 3 do
+                if escaped() then
+                    ok = true
+                    break
+                end
 
-        -- Maksimal 3 percobaan. Finish line-nya bisa belum kebaca pas map baru ke-load,
-        -- jadi "belum ketemu" itu tunggu sebentar dan coba lagi -- bukan alasan nyerah.
-        for attempt = 1, 3 do
-            if escaped() then
-                ok = true
-                break
-            end
+                if tpFinishLine() then
+                    attempted = true
+                    esc.state = string.format("finish line %d/3", attempt)
 
-            if tpFinishLine() then
-                esc.state = string.format("finish line %d/3", attempt)
-
-                local deadline = tick() + 2
-
-                while tick() < deadline do
-                    if escaped() then
+                    if waitEscaped(2) then
                         ok = true
                         break
                     end
-
-                    task.wait(0.2)
+                else
+                    missing = true
+                    esc.state = string.format("nunggu finish line %d/3", attempt)
+                    task.wait(1)
                 end
-            else
-                esc.state = string.format("nunggu finish line %d/3", attempt)
-                task.wait(1)
             end
         end
 
         if ok then
             esc.state = "berhasil"
+            esc.retries = 0
 
             if esc.SkipResults then
                 pcall(function()
@@ -16091,49 +15958,56 @@ do
             end
 
             say("escape", 3)
+
+            -- Wajib: tanpa ini, match yang udah ke-escape bakal diulang tiap tick --
+            -- dan itu makan puluhan TP + notif per detik.
+            esc.finished = true
+        elseif not attempted or missing then
+            -- Ada target yang dibutuhin tapi instancenya belum ke-load. Ini BUKAN gagal --
+            -- jangan ditutup, nanti dicoba lagi di tick berikutnya.
+            --
+            -- Tapi dibatasi: tanpa batas, satu match yang target-nya emang nggak ada bakal
+            -- di-TP berulang-ulang terus sampai match-nya bubar.
+            esc.retries = (esc.retries or 0) + 1
+
+            if esc.retries >= 5 then
+                esc.state = "gagal"
+                say("target nggak ketemu terus - cek manual", 4)
+                esc.finished = true
+            else
+                esc.state = "nunggu target ke-load"
+            end
         else
             esc.state = "gagal"
             say("escape gagal - cek manual", 4)
+            esc.finished = true
         end
 
-        esc.finished = true
         esc.busy = false
     end
 
+    -- Generator NGGAK dipakai sama sekali: yang dicek cuma "match-nya udah jalan apa
+    -- belum". Dua syarat di bawah harus kepegang dulu -- kalau nggak, TP-nya nembak ke
+    -- tempat yang belum ada dan cuma buang 3 percobaan.
     local function triggerReady()
-        if esc.Mode == "Langsung Menang" then
-            -- Begitu Map muncul langsung jalan, tanpa nyentuh generator. Tapi dua syarat
-            -- ini harus kepegang dulu, kalau nggak TP-nya nembak ke tempat yang belum ada
-            -- dan cuma buang 3 percobaan.
-            if not characterRoot() then
-                esc.state = "match mulai - nunggu karakter"
-                return false
-            end
-
-            if not finishLine() then
-                esc.state = "match mulai - nunggu finish line"
-                return false
-            end
-
-            esc.state = "match jalan - langsung menang"
-            return true
-        end
-
-        local done, total = genStatus()
-
-        if total == 0 then
-            esc.state = "generator belum kebaca"
+        if not characterRoot() then
+            esc.state = "match mulai - nunggu karakter"
             return false
         end
 
-        local need = math.min(esc.MinGens, total)
+        local gate = (esc.Target ~= "Cuma Finish Line") and nearestGate() or nil
+        local line = (esc.Target ~= "Cuma Gate") and finishLine() or nil
 
-        if done >= need then
-            return true
+        -- Cukup SALAH SATU target yang kebaca. Nunggu dua-duanya ada itu jebakan: kalau
+        -- salah satu namanya berubah di update game, fitur ini diam-diam nggak pernah
+        -- jalan sama sekali -- dan nggak ada tandanya kenapa.
+        if not gate and not line then
+            esc.state = "match mulai - nunggu target"
+            return false
         end
 
-        esc.state = string.format("%d/%d gen", done, need)
-        return false
+        esc.state = "match jalan - langsung menang"
+        return true
     end
 
     -- ================= UI =================
@@ -16155,31 +16029,16 @@ do
 
     AutoEscapeToggle:AddKeyPicker("None")
 
-    escSection:AddDropdown("Mode Menang", { "Langsung Menang", "Setelah Gen Cukup" }, "Langsung Menang",
-        function(mode)
-            esc.Mode = mode
-        end, { Flag = "AutoEscapeMode" })
-
-    escSection:AddSlider("Gen Minimal", 1, 10, 5, function(value)
-        esc.MinGens = math.clamp(math.floor(value + 0.5), 1, 10)
-    end, { Increment = 1, Flag = "AutoEscapeMinGens" })
-
-    escSection:AddToggle("Buka Gate Dulu", true, function(enabled)
-        esc.OpenGate = enabled
-    end, { Flag = "AutoEscapeGate" })
-
-    escSection:AddToggle("Auto Bypass Pintu", true, function(enabled)
-        esc.BypassDoor = enabled
-    end, { Flag = "AutoEscapeBypass" })
+    escSection:AddDropdown("Target Escape",
+        { "Gate Dulu, lalu Finish Line", "Cuma Gate", "Cuma Finish Line" },
+        "Gate Dulu, lalu Finish Line",
+        function(target)
+            esc.Target = target
+        end, { Flag = "AutoEscapeTarget" })
 
     escSection:AddToggle("Auto Skip Endscreen", true, function(enabled)
         esc.SkipResults = enabled
     end, { Flag = "AutoEscapeSkip" })
-
-    -- Seberapa deket yang dianggap "udah nyampe" buat mencet lever gate.
-    escSection:AddSlider("Radius Interaksi", 1, 20, 5, function(studs)
-        esc.Radius = studs
-    end, { Increment = 1, Flag = "AutoEscapeRadius" })
 
     escSection:AddToggle("Auto Server Hop", false, function(enabled)
         esc.HopEnabled = enabled
@@ -16241,16 +16100,13 @@ do
                 esc.lastHopped = nil
                 esc.waitSince = nil
                 esc.hopNote = nil
+                esc.announced = false
+                esc.retries = 0
             elseif not map then
                 esc.handledMap = nil
 
-                -- Status "nunggu match" cuma dipasang SEKALI pas transisinya. Kalau
-                -- dipasang tiap tick, dia nimbal balik pesan tryHop ("nunggu match di
-                -- server sepi (2 pemain)", "hop habis") -- dan yang ke-lihat user jadi
-                -- cuma yang generik.
                 if esc.waitSince == nil then
                     esc.waitSince = tick()
-                    esc.state = "nunggu match"
                 end
             end
 
