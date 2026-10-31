@@ -22,7 +22,7 @@ _G.AerisSessionTimestamp = os.time()
 -- Build tag. Executor sering nge-cache hasil game:HttpGet, jadi gampang ketipu:
 -- script kelihatan "udah di-update" padahal yang jalan masih versi lama. Tag ini
 -- muncul di notifikasi startup, jadi ketahuan versi mana yang beneran jalan.
-local AERIS_BUILD = "vd-2.13"
+local AERIS_BUILD = "vd-2.14"
 
 -- Helper: Get Safe GUI Parent (Executors / CoreGui / PlayerGui)
 local function GetGuiParent()
@@ -15509,29 +15509,54 @@ AbilityCard:AddButton("Instant Escape", function()
     fn18()
 end)
 
--- ===== AUTO ESCAPE =====
--- Nyelesain round tanpa disentuh: begitu gen cukup, buka exit gate lalu kabur lewat
--- finish line. Tiga tahap, dan urutannya nggak boleh dibalik:
---   1. lever gate dipicu. Di game ini aksi interaksi jalurnya tombol aksi GUI
---      (Survivor-mob.Controls.action), BUKAN ProximityPrompt -- sama kayak pumpkin.
---   2. daun pintunya masih solid, jadi di-bypass (CanCollide off) sebagai jaring kedua.
---   3. finish line. Jalur TP-nya sama dengan tombol "Instant Escape" yang udah ada.
--- Semua penungguan dijaga jarak/waktu batas, bukan timer buta -- pelajaran pumpkin farm.
+-- ===== AUTO FARM EXP (server hop + menang instan) =====
+-- Loop penuh buat farming EXP:
+--   1. nunggu match. Match butuh 3 orang, jadi di server rame bisa kelamaan.
+--   2. kalau kelamaan nunggu, hop ke server Violence District yang SEPI (1-2 orang) --
+--      di situ yang kurang cuma 1 orang, jadi match-nya cepet mulai.
+--   3. begitu Map muncul, langsung TP ke finish line: menang, tanpa nyentuh generator.
+--      (mode "Langsung Menang"; mode "Setelah Gen Cukup" tetap ada buat cadangan.)
+--
+-- Detail yang nggak boleh diubah:
+--   - Lever gate dipicu lewat tombol aksi GUI (Survivor-mob.Controls.action), BUKAN
+--     ProximityPrompt -- game ini nggak punya prompt sama sekali, sama kayak pumpkin.
+--   - Yang dijaga jaraknya, bukan timer: ensureNear() nempel karakter ke lever sampai
+--     radius-nya masuk, baru tombol dicet. Pelajaran dari bug pumpkin -- nyetel
+--     0.15/0.5/0.8 itu cuma mindahin tebakan.
+--   - Daftar generator di-cache per match, dan daftar server di-fetch maksimal sekali
+--     per cooldown. GetDescendants() tiap 0.5 detik bikin FPS ancur.
 do
     local esc = {
         Enabled = false,
+        Mode = "Langsung Menang",
         MinGens = 5,
         OpenGate = true,
         BypassDoor = true,
         SkipResults = true,
         Radius = 5,
+
+        HopEnabled = false,
+        HopMax = 2,
+        HopAfter = 15,
+        HopLimit = 10,
+        hopsUsed = 0,
+        lastHopped = nil,
+        hopCooldownUntil = 0,
+
         state = "idle",
+        hopNote = nil,
         busy = false,
         finished = false,
         handledMap = nil,
+        waitSince = nil,
     }
 
     _G.Ox.AutoEscape = esc
+
+    local HttpService = game:GetService("HttpService")
+    local TeleportService = game:GetService("TeleportService")
+
+    local SERVER_URL = "https://games.roblox.com/v1/games/%d/servers/Public?limit=100&sortOrder=Asc&excludeFullGames=true"
 
     local function characterRoot()
         local char = localPlayer and localPlayer.Character
@@ -15541,18 +15566,176 @@ do
     local function say(desc, duration)
         pcall(function()
             lib:Notify({
-                Title = "Auto Escape",
+                Title = "Auto Farm EXP",
                 Description = desc,
                 Duration = duration or 2,
             })
         end)
     end
 
+    -- ================= HTTP =================
+
+    -- Executor beda-beda: ada yang nyediain game:HttpGet, ada yang cuma syn.request /
+    -- http.request. Dua-duanya dicoba, dan kalau dua-duanya nggak ada hasilnya nil --
+    -- bukan error yang bikin loop-nya mati.
+    local function httpGet(url)
+        local body
+
+        pcall(function()
+            if type(game.HttpGet) == "function" then
+                body = game:HttpGet(url)
+            end
+        end)
+
+        if type(body) ~= "string" or body == "" then
+            pcall(function()
+                local requester = (syn and syn.request) or (http and http.request) or request
+
+                if type(requester) == "function" then
+                    local response = requester({ Url = url, Method = "GET" })
+                    body = response and response.Body
+                end
+            end)
+        end
+
+        if type(body) ~= "string" or body == "" then
+            return nil
+        end
+
+        return body
+    end
+
+    local function fetchServers()
+        local body = httpGet(string.format(SERVER_URL, game.PlaceId))
+
+        if not body then
+            return nil
+        end
+
+        local ok, data = pcall(function()
+            return HttpService:JSONDecode(body)
+        end)
+
+        if not ok or type(data) ~= "table" or type(data.data) ~= "table" then
+            return nil
+        end
+
+        return data.data
+    end
+
+    local function currentServerPlaying(list)
+        for _, server in ipairs(list) do
+            if server.id == game.JobId then
+                return tonumber(server.playing) or 0
+            end
+        end
+
+        return nil
+    end
+
+    -- Server kosong (0 pemain) juga nggak ada gunanya: match butuh 3 orang dan di server
+    -- kosong nggak ada yang bakal nyusul. Yang dicari 1..HopMax, dan yang pemainnya
+    -- paling banyak didahuluin -- itu yang paling dekat ke 3.
+    local function pickQuietServer(list, skipId)
+        local best
+
+        for _, server in ipairs(list) do
+            local id = server.id
+            local playing = tonumber(server.playing) or 0
+
+            if id and id ~= game.JobId and id ~= skipId
+                and playing >= 1 and playing <= esc.HopMax then
+                if not best or playing > best.playing then
+                    best = { id = id, playing = playing }
+                end
+            end
+        end
+
+        return best
+    end
+
+    local function hopTo(server)
+        return (pcall(function()
+            TeleportService:TeleportToPlaceInstance(game.PlaceId, server.id, localPlayer)
+        end))
+    end
+
+    -- ================= NUNGGU MATCH / HOP =================
+
+    -- Parameter "force" dipakai tombol "Hop Sekarang": user yang minta pindah sekarang, jadi
+    -- penjaga "server kita udah sepi, jangan pindah" nggak boleh ngeblok.
+    local function tryHop(force)
+        if not esc.HopEnabled then
+            esc.hopNote = nil
+            return
+        end
+
+        if tick() < esc.hopCooldownUntil then
+            return
+        end
+
+        if esc.hopsUsed >= esc.HopLimit then
+            esc.hopNote = string.format("hop habis (%d/%d)", esc.hopsUsed, esc.HopLimit)
+            return
+        end
+
+        if esc.waitSince == nil then
+            esc.waitSince = tick()
+        end
+
+        local waited = tick() - esc.waitSince
+
+        if waited < esc.HopAfter then
+            esc.hopNote = string.format("nunggu match %ds", math.floor(waited))
+            return
+        end
+
+        local list = fetchServers()
+
+        if not list then
+            esc.hopNote = "daftar server gagal"
+            esc.hopCooldownUntil = tick() + 10
+            return
+        end
+
+        -- Kalau server kita SENDIRI udah sepi, jangan hop lagi. Ini yang bikin hop-nya
+        -- nggak muter: pindah ke server sepi terus langsung pindah lagi = nggak pernah
+        -- nunggu cukup lama buat match-nya mulai.
+        local own = currentServerPlaying(list)
+
+        if not force and own and own >= 1 and own <= esc.HopMax and waited < esc.HopAfter * 3 then
+            esc.hopNote = string.format("nunggu di server sepi (%d pemain)", own)
+            esc.hopCooldownUntil = tick() + esc.HopAfter
+            return
+        end
+
+        local target = pickQuietServer(list, esc.lastHopped)
+
+        if not target then
+            esc.hopNote = "server sepi nggak ada"
+            esc.hopCooldownUntil = tick() + 10
+            return
+        end
+
+        esc.hopsUsed = esc.hopsUsed + 1
+        esc.lastHopped = target.id
+        esc.hopCooldownUntil = tick() + 20
+        esc.waitSince = tick()
+        esc.hopNote = string.format("hop ke server %d pemain", target.playing)
+
+        say(string.format("hop ke server %d pemain (hop %d/%d)", target.playing, esc.hopsUsed, esc.HopLimit), 3)
+        hopTo(target)
+    end
+
+    -- ================= INTERAKSI =================
+
     local function distanceTo(part)
         local hrp = characterRoot()
+
         if not hrp or not part or not part.Parent then
             return nil
         end
+
         return (hrp.Position - part.Position).Magnitude
     end
 
@@ -15640,11 +15823,13 @@ do
         end))
     end
 
+    -- ================= MAP =================
+
     -- Daftar generator di-cache per match. GetDescendants() seluruh Map tiap 0.5 detik
     -- itu yang bikin FPS ancur, jadi discan sekali per match -- abis itu cuma baca atribut.
     -- Filternya "ada GeneratorBody", bukan "ada RepairProgress": atribut progress baru
     -- muncul pas gen mulai dikerjain, jadi kalau difilter pakai itu gen yang belum disentuh
-    -- nggak kehitung dan totalnya jadi salah.
+    -- nggak kehitung dan totalnya salah.
     local genCache = { map = nil, list = {} }
 
     local function generators()
@@ -15718,6 +15903,35 @@ do
         return out
     end
 
+    -- Finish line-nya dicache dan discan maksimal sekali per 2 detik: nyari dia butuh
+    -- GetDescendants() seluruh workspace, dan di mode "Langsung Menang" ini dicek tiap
+    -- tick. Instance baru tiap match, jadi cache-nya kadaluarsa sendiri lewat cek Parent.
+    local finishCache = { part = nil, nextScan = 0 }
+
+    local function finishLine()
+        local cached = finishCache.part
+
+        if cached and cached.Parent then
+            return cached
+        end
+
+        if tick() < finishCache.nextScan then
+            return nil
+        end
+
+        finishCache.nextScan = tick() + 2
+
+        for _, descendant in ipairs(workspace:GetDescendants()) do
+            if descendant:IsA("BasePart") and string.lower(descendant.Name) == "fininshline" then
+                finishCache.part = descendant
+                return descendant
+            end
+        end
+
+        finishCache.part = nil
+        return nil
+    end
+
     -- Duplikat sengaja dari "Bypass Exit Gate": jangan gantung ke callback toggle UI
     -- kalau kerjanya bisa dilakuin langsung di sini.
     local function openDoor(gate)
@@ -15743,16 +15957,6 @@ do
                 cap.Transparency = 0
             end
         end
-    end
-
-    local function finishLine()
-        for _, descendant in ipairs(workspace:GetDescendants()) do
-            if descendant:IsA("BasePart") and string.lower(descendant.Name) == "fininshline" then
-                return descendant
-            end
-        end
-
-        return nil
     end
 
     -- Round kelar = Map ilang. Layar Results dipakai sebagai penanda kedua.
@@ -15781,6 +15985,8 @@ do
         hrp.CFrame = part.CFrame + Vector3.new(0, 5, 0)
         return true
     end
+
+    -- ================= EKSEKUSI =================
 
     -- Satu percobaan penuh: gate -> pintu -> finish line.
     local function escapeRun()
@@ -15817,7 +16023,7 @@ do
             local gate = list[1]
 
             if gate then
-                say("gen cukup - buka gate")
+                say("buka gate dulu")
 
                 local lever = gate:FindFirstChild("ExitLever")
                     or gate:FindFirstChildWhichIsA("BasePart")
@@ -15844,29 +16050,30 @@ do
 
         task.wait(0.3)
 
-        -- Maksimal 3 percobaan. Kalau tetap nggak ke-trigger, nyerah buat round ini
-        -- daripada ngulang terus dan kelihatan aneh.
+        -- Maksimal 3 percobaan. Finish line-nya bisa belum kebaca pas map baru ke-load,
+        -- jadi "belum ketemu" itu tunggu sebentar dan coba lagi -- bukan alasan nyerah.
         for attempt = 1, 3 do
             if escaped() then
                 ok = true
                 break
             end
 
-            if not tpFinishLine() then
-                break
-            end
+            if tpFinishLine() then
+                esc.state = string.format("finish line %d/3", attempt)
 
-            esc.state = string.format("finish line %d/3", attempt)
+                local deadline = tick() + 2
 
-            local deadline = tick() + 2
+                while tick() < deadline do
+                    if escaped() then
+                        ok = true
+                        break
+                    end
 
-            while tick() < deadline do
-                if escaped() then
-                    ok = true
-                    break
+                    task.wait(0.2)
                 end
-
-                task.wait(0.2)
+            else
+                esc.state = string.format("nunggu finish line %d/3", attempt)
+                task.wait(1)
             end
         end
 
@@ -15893,18 +16100,65 @@ do
         esc.busy = false
     end
 
-    local escSection = S_Page:CreateSection("Auto Escape", "zap")
+    local function triggerReady()
+        if esc.Mode == "Langsung Menang" then
+            -- Begitu Map muncul langsung jalan, tanpa nyentuh generator. Tapi dua syarat
+            -- ini harus kepegang dulu, kalau nggak TP-nya nembak ke tempat yang belum ada
+            -- dan cuma buang 3 percobaan.
+            if not characterRoot() then
+                esc.state = "match mulai - nunggu karakter"
+                return false
+            end
+
+            if not finishLine() then
+                esc.state = "match mulai - nunggu finish line"
+                return false
+            end
+
+            esc.state = "match jalan - langsung menang"
+            return true
+        end
+
+        local done, total = genStatus()
+
+        if total == 0 then
+            esc.state = "generator belum kebaca"
+            return false
+        end
+
+        local need = math.min(esc.MinGens, total)
+
+        if done >= need then
+            return true
+        end
+
+        esc.state = string.format("%d/%d gen", done, need)
+        return false
+    end
+
+    -- ================= UI =================
+
+    local escSection = S_Page:CreateSection("Auto Farm EXP", "zap")
     AutoEscapeCard = escSection
 
-    AutoEscapeToggle = escSection:AddToggle("Auto Escape", false, function(enabled)
+    AutoEscapeToggle = escSection:AddToggle("Auto Farm EXP", false, function(enabled)
         esc.Enabled = enabled
         esc.finished = false
         esc.state = enabled and "idle" or "off"
+
+        if not enabled then
+            esc.waitSince = nil
+        end
 
         say(enabled and "ENABLED" or "DISABLED")
     end, { Flag = "AutoEscape" })
 
     AutoEscapeToggle:AddKeyPicker("None")
+
+    escSection:AddDropdown("Mode Menang", { "Langsung Menang", "Setelah Gen Cukup" }, "Langsung Menang",
+        function(mode)
+            esc.Mode = mode
+        end, { Flag = "AutoEscapeMode" })
 
     escSection:AddSlider("Gen Minimal", 1, 10, 5, function(value)
         esc.MinGens = math.clamp(math.floor(value + 0.5), 1, 10)
@@ -15927,10 +16181,45 @@ do
         esc.Radius = studs
     end, { Increment = 1, Flag = "AutoEscapeRadius" })
 
+    escSection:AddToggle("Auto Server Hop", false, function(enabled)
+        esc.HopEnabled = enabled
+        esc.hopsUsed = 0
+        esc.lastHopped = nil
+        esc.hopCooldownUntil = 0
+
+        say(enabled and "server hop ON" or "server hop OFF")
+    end, { Flag = "AutoEscapeHop" })
+
+    escSection:AddSlider("Maks Pemain di Server", 1, 10, 2, function(value)
+        esc.HopMax = math.clamp(math.floor(value + 0.5), 1, 10)
+    end, { Increment = 1, Flag = "AutoEscapeHopMax" })
+
+    escSection:AddSlider("Hop Setelah Nunggu", 5, 120, 15, function(value)
+        esc.HopAfter = math.clamp(math.floor(value + 0.5), 5, 120)
+    end, { Increment = 5, Flag = "AutoEscapeHopAfter" })
+
+    escSection:AddSlider("Maks Hop", 1, 30, 10, function(value)
+        esc.HopLimit = math.clamp(math.floor(value + 0.5), 1, 30)
+    end, { Increment = 1, Flag = "AutoEscapeHopLimit" })
+
     escSection:AddButton("Escape Sekarang", function()
         esc.finished = false
         task.spawn(escapeRun)
     end)
+
+    escSection:AddButton("Hop Sekarang", function()
+        -- Buang semua penundaan, langsung cari server sepi sekarang juga.
+        esc.hopsUsed = 0
+        esc.lastHopped = nil
+        esc.hopCooldownUntil = 0
+        esc.waitSince = tick() - (esc.HopAfter + 1)
+
+        task.spawn(function()
+            tryHop(true)
+        end)
+    end)
+
+    -- ================= LOOP =================
 
     task.spawn(function()
         while _G.Ox.ScriptAlive do
@@ -15940,39 +16229,48 @@ do
 
             -- Reset penanda cuma pas MUNCUL Map baru (instance beda). Jangan di-reset
             -- pas Map-nya ilang: sesudah escape, Map masih nempel beberapa detik pas
-            -- layar Results/transisi. Kalau penandanya ke-reset di situ, gen yang masih
-            -- 100% bakal nge-trigger escapeRun lagi -- TP dan notify berulang tanpa guna.
+            -- layar Results/transisi. Kalau penandanya ke-reset di situ, match yang
+            -- masih kebaca bakal nge-trigger escape lagi -- TP dan notify berulang.
             if map and map ~= esc.handledMap then
                 esc.handledMap = map
                 esc.finished = false
                 esc.state = "idle"
+
+                -- Match dapat = hitungan hop dan timer tunggu-nya direset.
+                esc.hopsUsed = 0
+                esc.lastHopped = nil
+                esc.waitSince = nil
+                esc.hopNote = nil
             elseif not map then
                 esc.handledMap = nil
-                esc.state = "nunggu match"
+
+                -- Status "nunggu match" cuma dipasang SEKALI pas transisinya. Kalau
+                -- dipasang tiap tick, dia nimbal balik pesan tryHop ("nunggu match di
+                -- server sepi (2 pemain)", "hop habis") -- dan yang ke-lihat user jadi
+                -- cuma yang generik.
+                if esc.waitSince == nil then
+                    esc.waitSince = tick()
+                    esc.state = "nunggu match"
+                end
             end
 
             if not esc.Enabled then
                 esc.state = "off"
-            elseif not map then
-                esc.state = "nunggu match"
+                esc.waitSince = nil
             elseif esc.busy then
-                -- lagi jalan, diam.
+                -- escapeRun lagi jalan, diam.
+            elseif not map then
+                -- Di lobby / intermission: ini bagian farming-nya.
+                tryHop()
+
+                -- Catatan hop terakhir ditempelin, bukan cuma ditulis sekali terus ketiban
+                -- "nunggu match" generik di tick berikutnya. Kalau hop-nya mati, catatannya
+                -- nil, jadi balik ke "nunggu match" biasa.
+                esc.state = esc.hopNote or "nunggu match"
             elseif esc.finished then
-                -- udah kelar di round ini, jangan diulang.
-            else
-                local done, total = genStatus()
-
-                if total == 0 then
-                    esc.state = "generator belum kebaca"
-                else
-                    local need = math.min(esc.MinGens, total)
-
-                    if done >= need then
-                        task.spawn(escapeRun)
-                    else
-                        esc.state = string.format("%d/%d gen", done, need)
-                    end
-                end
+                -- Round ini udah kelar, jangan diulang.
+            elseif triggerReady() then
+                task.spawn(escapeRun)
             end
         end
     end)
