@@ -22,7 +22,7 @@ _G.AerisSessionTimestamp = os.time()
 -- Build tag. Executor sering nge-cache hasil game:HttpGet, jadi gampang ketipu:
 -- script kelihatan "udah di-update" padahal yang jalan masih versi lama. Tag ini
 -- muncul di notifikasi startup, jadi ketahuan versi mana yang beneran jalan.
-local AERIS_BUILD = "vd-2.16"
+local AERIS_BUILD = "vd-2.17"
 
 -- Helper: Get Safe GUI Parent (Executors / CoreGui / PlayerGui)
 local function GetGuiParent()
@@ -14356,24 +14356,30 @@ do
     end)
 
 
+
     -- ===== AKSESORI TEMPEL (crown dll) =====
-    -- Nempelin aksesori (mahkota, topi, add-on) ke karakter pakai teknik yang sama kayak
-    -- Korless: instance-nya dibikin sendiri di client, terus di-weld ke bagian tubuh.
-    -- Aksesornya NGGAK di-equip lewat sistem game -- game ini nggak nerima item yang
-    -- nggak dimiliki, dan yang kita butuhin cuma tampilannya.
+    -- Nempelin aksesori (mahkota, topi, add-on) ke karakter, sekali klik, tanpa diatur.
     --
-    -- Sumber mesh-nya dari game:GetObjects("rbxassetid://<id>"). Jalur itu dipilih karena
-    -- dia bawa sesi login client-nya sendiri. Endpoint HTTPS (assetdelivery) sekarang
-    -- minta auth dan balikin 401, jadi MeshId mentahnya nggak bisa ditarik dari luar game.
-    -- Efek sampingnya bagus: Asset ID apa pun bisa dipakai, nggak cuma yang di-preset.
+    -- Caranya sama kayak Korless -- instance dibikin sendiri di client terus ditempel ke
+    -- karakter, bukan di-equip lewat sistem game. TAPI penempatannya NGGAK pakai offset
+    -- hafalan: yang dipakai titik tempel resmi bawaan Roblox.
+    --
+    -- Setiap kepala punya attachment (HatAttachment), dan tiap aksesori juga punya
+    -- attachment sendiri. Kalau dua-duanya disambung, hasilnya persis kayak dipakai
+    -- beneran -- itu yang dilakuin AccessoryWeld punya Roblox sendiri:
+    --     weld.Part0 = Head,  weld.C0 = head.HatAttachment.CFrame
+    --     weld.Part1 = Handle, weld.C1 = handle.HatAttachment.CFrame
+    -- Rumus weld-nya Part0 * C0 == Part1 * C1, jadi Handle-nya mendarat di tempat yang
+    -- bener tanpa perlu angka geser sama sekali.
+    --
+    -- Sumber mesh-nya dari game:GetObjects("rbxassetid://<id>") -- jalur itu dipilih
+    -- karena dia bawa sesi login client-nya sendiri (endpoint HTTPS assetdelivery
+    -- sekarang balikin "Authentication required"). Efek sampingnya bagus: asset id apa
+    -- pun bisa dipakai, nggak cuma yang di-preset.
     do
         local acc = {
             Enabled = false,
             AssetId = 10159600649,
-            Scale = 1,
-            OffsetX = 0,
-            OffsetY = 0.6,
-            OffsetZ = 0,
             parts = {},
             conn = nil,
         }
@@ -14444,6 +14450,62 @@ do
             return nil
         end
 
+        local function attachmentsOf(inst)
+            local out = {}
+
+            for _, child in ipairs(inst:GetChildren()) do
+                if child:IsA("Attachment") then
+                    table.insert(out, child)
+                end
+            end
+
+            -- Sebagian aksesori naruh attachment-nya lebih dalam dari Handle-nya.
+            if #out == 0 then
+                for _, descendant in ipairs(inst:GetDescendants()) do
+                    if descendant:IsA("Attachment") then
+                        table.insert(out, descendant)
+                    end
+                end
+            end
+
+            return out
+        end
+
+        -- Nyari pasangan titik tempel. Urutannya penting:
+        --   1. attachment yang NAMANYA sama di dua sisi (HatAttachment <-> HatAttachment)
+        --      -- ini yang paling bener, karena itemnya emang ditulis buat titik itu
+        --   2. kalau nggak ada yang namanya sama, pakai attachment mana pun milik
+        --      aksesornya + HatAttachment punya kepala
+        --   3. kalau salah satu sisi nggak punya attachment, nil (nanti pakai titik atas
+        --      kepala -- masih kepasang bener, cuma nggak sepresisi attachment)
+        local function matchAttachments(handle, head)
+            local headAtts = attachmentsOf(head)
+
+            if #headAtts == 0 then
+                return nil, nil
+            end
+
+            local byName = {}
+
+            for _, att in ipairs(headAtts) do
+                byName[att.Name] = att
+            end
+
+            local handleAtts = attachmentsOf(handle)
+
+            for _, att in ipairs(handleAtts) do
+                if byName[att.Name] then
+                    return att, byName[att.Name]
+                end
+            end
+
+            if #handleAtts > 0 then
+                return handleAtts[1], byName["HatAttachment"] or headAtts[1]
+            end
+
+            return nil, nil
+        end
+
         local function attach()
             local char = localPlayer and localPlayer.Character
             local head = char and char:FindFirstChild("Head")
@@ -14479,31 +14541,28 @@ do
             part.CanCollide = false
             part.Massless = true
             part.Anchored = false
-
-            -- Skala: MeshPart dari Size, Part + SpecialMesh dari mesh.Scale.
-            if part:IsA("MeshPart") then
-                part.Size = part.Size * acc.Scale
-            else
-                local mesh = part:FindFirstChildWhichIsA("DataModelMesh", true)
-
-                if mesh then
-                    mesh.Scale = mesh.Scale * acc.Scale
-                end
-            end
-
             part.Parent = char
 
-            -- Kepala itu titik acuannya, dan HalfSize dipakai biar Geser Y 0 nempel di
-            -- ATAS kepala -- bukan di tengah batang leher.
-            part.CFrame = head.CFrame * CFrame.new(
-                acc.OffsetX,
-                head.Size.Y * 0.5 + acc.OffsetY,
-                acc.OffsetZ
-            )
+            -- Weld, bukan WeldConstraint: WeldConstraint cuma ngunci posisi relatif yang
+            -- ada SEKARANG, jadi tetap butuh angka offset. Weld punya C0/C1, dan dari situ
+            -- penempatannya dihitung dari titik tempel.
+            local att, headAtt = matchAttachments(part, head)
 
-            local weld = Instance.new("WeldConstraint")
+            local weld = Instance.new("Weld")
+            weld.Name = "StickAccWeld"
             weld.Part0 = head
             weld.Part1 = part
+
+            if att and headAtt then
+                weld.C0 = headAtt.CFrame
+                weld.C1 = att.CFrame
+            else
+                -- Nggak ada attachment di salah satu sisi (rig custom / mesh lepas):
+                -- tempel di titik atas kepala. Tetap sekali klik, tetep nggak diatur.
+                weld.C0 = CFrame.new(0, head.Size.Y * 0.5, 0)
+                weld.C1 = CFrame.new(0, 0, 0)
+            end
+
             weld.Parent = part
 
             table.insert(acc.parts, part)
@@ -14522,9 +14581,9 @@ do
             return false
         end
 
-        -- Dipakai semua slider + preset + textbox. Kalau cuma lihat acc.Enabled,
-        -- aksesori yang dipasang manual lewat "Pasang Sekarang" (toggle OFF) nggak ikut
-        -- ke-update pas slider digeser -- kelihatan kayak slider-nya nggak ngefek.
+        -- Dipakai preset + textbox: kalau ada yang lagi kepasang, langsung dipasang ulang
+        -- pakai asset baru. Kalau cuma lihat acc.Enabled, aksesori yang dipasang manual
+        -- lewat "Pasang Sekarang" nggak ikut ke-update.
         local function refresh()
             if acc.Enabled or #acc.parts > 0 then
                 apply(false)
@@ -14534,6 +14593,8 @@ do
         local accSection = M_Page:CreateSection("Aksesori Tempel", "shirt")
         StickAccCard = accSection
 
+        -- Satu toggle doang buat nyalain. Pasang, lepas, dan pasang-ulang tiap respawn
+        -- semua jalan dari sini -- nggak ada yang perlu diatur.
         StickAccToggle = accSection:AddToggle("Auto Pasang (Respawn)", false, function(enabled)
             acc.Enabled = enabled
 
@@ -14582,26 +14643,6 @@ do
             acc.AssetId = tonumber(id)
             refresh()
         end)
-
-        accSection:AddSlider("Skala", 0.1, 5, 1, function(value)
-            acc.Scale = value
-            refresh()
-        end, { Increment = 0.05, Flag = "StickAccScale" })
-
-        accSection:AddSlider("Geser X", -3, 3, 0, function(studs)
-            acc.OffsetX = studs
-            refresh()
-        end, { Increment = 0.05, Flag = "StickAccX" })
-
-        accSection:AddSlider("Geser Y", -3, 3, 0.6, function(studs)
-            acc.OffsetY = studs
-            refresh()
-        end, { Increment = 0.05, Flag = "StickAccY" })
-
-        accSection:AddSlider("Geser Z", -3, 3, 0, function(studs)
-            acc.OffsetZ = studs
-            refresh()
-        end, { Increment = 0.05, Flag = "StickAccZ" })
 
         accSection:AddButton("Pasang Sekarang", function()
             apply(true)
