@@ -22,7 +22,7 @@ _G.AerisSessionTimestamp = os.time()
 -- Build tag. Executor sering nge-cache hasil game:HttpGet, jadi gampang ketipu:
 -- script kelihatan "udah di-update" padahal yang jalan masih versi lama. Tag ini
 -- muncul di notifikasi startup, jadi ketahuan versi mana yang beneran jalan.
-local AERIS_BUILD = "vd-2.17"
+local AERIS_BUILD = "vd-2.18"
 
 -- Helper: Get Safe GUI Parent (Executors / CoreGui / PlayerGui)
 local function GetGuiParent()
@@ -14377,35 +14377,17 @@ do
     -- sekarang balikin "Authentication required"). Efek sampingnya bagus: asset id apa
     -- pun bisa dipakai, nggak cuma yang di-preset.
     do
+        -- Satu item aja, dipatok di sini. Nggak ada dropdown, nggak ada textbox --
+        -- kalau mau ganti item, ganti angka ini.
+        local ASSET_ID = 10159600649
+
         local acc = {
             Enabled = false,
-            AssetId = 10159600649,
             parts = {},
             conn = nil,
         }
 
         _G.Ox.StickAccessory = acc
-
-        -- Preset + asset id-nya. Semua id di sini diverifikasi lewat API katalog Roblox
-        -- (nama + AssetTypeId=8/Hat), bukan hasil ngarang.
-        -- 10159600649 = "8-Bit Royal Crown" bikinannya Roblox sendiri (limited).
-        local PRESETS = {
-            ["8-Bit Royal Crown (10159600649)"] = 10159600649,
-            ["8 Bit Crown (93016120692476)"] = 93016120692476,
-            ["8 Bit Crown v2 (72901449795575)"] = 72901449795575,
-            ["8-Bit Crown (132040105802466)"] = 132040105802466,
-            ["8-bit crown (117783060492339)"] = 117783060492339,
-            ["8-Bit Crown UGC (122145130681698)"] = 122145130681698,
-        }
-
-        local PRESET_ORDER = {
-            "8-Bit Royal Crown (10159600649)",
-            "8 Bit Crown (93016120692476)",
-            "8 Bit Crown v2 (72901449795575)",
-            "8-Bit Crown (132040105802466)",
-            "8-bit crown (117783060492339)",
-            "8-Bit Crown UGC (122145130681698)",
-        }
 
         local function say(desc, duration)
             pcall(function()
@@ -14521,7 +14503,7 @@ do
 
             local objects
             local ok = pcall(function()
-                objects = game:GetObjects("rbxassetid://" .. acc.AssetId)
+                objects = game:GetObjects("rbxassetid://" .. ASSET_ID)
             end)
 
             if not ok or type(objects) ~= "table" then
@@ -14581,28 +14563,21 @@ do
             return false
         end
 
-        -- Dipakai preset + textbox: kalau ada yang lagi kepasang, langsung dipasang ulang
-        -- pakai asset baru. Kalau cuma lihat acc.Enabled, aksesori yang dipasang manual
-        -- lewat "Pasang Sekarang" nggak ikut ke-update.
-        local function refresh()
-            if acc.Enabled or #acc.parts > 0 then
-                apply(false)
-            end
-        end
-
         local accSection = M_Page:CreateSection("Aksesori Tempel", "shirt")
         StickAccCard = accSection
 
-        -- Satu toggle doang buat nyalain. Pasang, lepas, dan pasang-ulang tiap respawn
-        -- semua jalan dari sini -- nggak ada yang perlu diatur.
-        StickAccToggle = accSection:AddToggle("Auto Pasang (Respawn)", false, function(enabled)
+        -- CUMA SATU kontrol -- persis prinsip Korless, tinggal apply.
+        --   ON  = kepasang sekarang, dan kepasang ulang otomatis tiap respawn
+        --   OFF = dilepas
+        -- Nggak ada pilihan item, nggak ada slider geser, nggak ada yang perlu diatur.
+        StickAccToggle = accSection:AddToggle("Pasang 8-Bit Royal Crown", false, function(enabled)
             acc.Enabled = enabled
 
             if enabled then
                 apply(true)
 
-                -- Re-apply tiap respawn kayak Korless: instance di client ilang tiap
-                -- karakter baru dibikin, jadi harus dipasang ulang.
+                -- Re-apply tiap respawn: instance di client ilang tiap karakter baru
+                -- dibikin, jadi harus dipasang ulang.
                 if not acc.conn then
                     acc.conn = localPlayer.CharacterAdded:Connect(function()
                         task.wait(1)
@@ -14614,48 +14589,11 @@ do
                 end
             else
                 detach()
-                say("aksesori dilepas")
+                say("crown dilepas")
             end
         end, { Flag = "StickAccAuto" })
 
         StickAccToggle:AddKeyPicker("None")
-
-        accSection:AddDropdown("Preset", PRESET_ORDER, PRESET_ORDER[1], function(name)
-            local id = PRESETS[name]
-
-            if id then
-                acc.AssetId = id
-                refresh()
-            end
-        end)
-
-        -- Textbox nerima Asset ID mentah ATAU link katalog -- digit pertama di string
-        -- itu id-nya, jadi "https://www.roblox.com/catalog/10159600649/..." langsung
-        -- kepakai tanpa dipotong manual.
-        accSection:AddTextbox("Asset ID / Link", "10159600649 atau link katalog...", function(text)
-            local id = tostring(text or ""):match("(%d+)")
-
-            if not id then
-                say("ID-nya nggak kebaca", 3)
-                return
-            end
-
-            acc.AssetId = tonumber(id)
-            refresh()
-        end)
-
-        accSection:AddButton("Pasang Sekarang", function()
-            apply(true)
-        end)
-
-        accSection:AddButton("Lepas", function()
-            if StickAccToggle and StickAccToggle:GetValue() then
-                StickAccToggle:SetValue(false)
-            end
-
-            detach()
-            say("aksesori dilepas")
-        end)
     end
 
     local Survivor = v:CreateTab("Survivor", false, false)
