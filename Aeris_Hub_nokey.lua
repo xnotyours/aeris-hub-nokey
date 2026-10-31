@@ -22,7 +22,7 @@ _G.AerisSessionTimestamp = os.time()
 -- Build tag. Executor sering nge-cache hasil game:HttpGet, jadi gampang ketipu:
 -- script kelihatan "udah di-update" padahal yang jalan masih versi lama. Tag ini
 -- muncul di notifikasi startup, jadi ketahuan versi mana yang beneran jalan.
-local AERIS_BUILD = "vd-2.18"
+local AERIS_BUILD = "vd-2.19"
 
 -- Helper: Get Safe GUI Parent (Executors / CoreGui / PlayerGui)
 local function GetGuiParent()
@@ -14357,50 +14357,60 @@ do
 
 
 
-    -- ===== AKSESORI TEMPEL (crown dll) =====
-    -- Nempelin aksesori (mahkota, topi, add-on) ke karakter, sekali klik, tanpa diatur.
+
+    -- ===== MORPH & AKSESORI (apply satu-satu) =====
+    -- Tiap baris berdiri sendiri: nyalain yang kamu mau, matiin kalau nggak. Semua
+    -- otomatis dipasang ulang tiap respawn, dan matiin = balik ke asli.
     --
-    -- Caranya sama kayak Korless -- instance dibikin sendiri di client terus ditempel ke
-    -- karakter, bukan di-equip lewat sistem game. TAPI penempatannya NGGAK pakai offset
-    -- hafalan: yang dipakai titik tempel resmi bawaan Roblox.
+    --   8-Bit Royal Crown  -> aksesori ditempel ke kepala (titik tempel resmi)
+    --   Headless           -> kepala ilang (muka-nya juga, kalau nggak dia ketinggalan)
+    --   Korblox            -> kaki kanan ilang
     --
-    -- Setiap kepala punya attachment (HatAttachment), dan tiap aksesori juga punya
-    -- attachment sendiri. Kalau dua-duanya disambung, hasilnya persis kayak dipakai
-    -- beneran -- itu yang dilakuin AccessoryWeld punya Roblox sendiri:
-    --     weld.Part0 = Head,  weld.C0 = head.HatAttachment.CFrame
-    --     weld.Part1 = Handle, weld.C1 = handle.HatAttachment.CFrame
-    -- Rumus weld-nya Part0 * C0 == Part1 * C1, jadi Handle-nya mendarat di tempat yang
-    -- bener tanpa perlu angka geser sama sekali.
+    -- Catatan soal rig: game ini R6 -- Korless bawaan hub juga nyari "Right Leg", bukan
+    -- "RightUpperLeg". Daftar nama R15 tetep dicek juga, biar nggak mati kalau rig-nya
+    -- berubah.
     --
-    -- Sumber mesh-nya dari game:GetObjects("rbxassetid://<id>") -- jalur itu dipilih
-    -- karena dia bawa sesi login client-nya sendiri (endpoint HTTPS assetdelivery
-    -- sekarang balikin "Authentication required"). Efek sampingnya bagus: asset id apa
-    -- pun bisa dipakai, nggak cuma yang di-preset.
+    -- Yang NGGAK dipakai di sini: angka offset hafalan. Aksesori ditempel lewat titik
+    -- tempel resmi (attachment), jadi nggak ada yang perlu digeser-geser.
     do
-        -- Satu item aja, dipatok di sini. Nggak ada dropdown, nggak ada textbox --
-        -- kalau mau ganti item, ganti angka ini.
+        -- Satu item aja, dipatok di sini. Mau ganti? ganti angka ini.
         local ASSET_ID = 10159600649
 
-        local acc = {
-            Enabled = false,
+        local morph = {
+            Crown = false,
+            Headless = false,
+            Korblox = false,
             parts = {},
             conn = nil,
         }
 
-        _G.Ox.StickAccessory = acc
+        _G.Ox.Morph = morph
+        _G.Ox.StickAccessory = morph   -- nama lama, biar apa pun yang masih nunjuk ke sini tetep jalan
 
         local function say(desc, duration)
             pcall(function()
                 lib:Notify({
-                    Title = "Aksesori",
+                    Title = "Morph",
                     Description = desc,
                     Duration = duration or 2,
                 })
             end)
         end
 
-        local function detach()
-            for _, part in ipairs(acc.parts) do
+        local function character()
+            return localPlayer and localPlayer.Character
+        end
+
+        local function setTransparency(part, value)
+            pcall(function()
+                part.Transparency = value
+            end)
+        end
+
+        -- ---------- 8-Bit Royal Crown ----------
+
+        local function detachCrown()
+            for _, part in ipairs(morph.parts) do
                 pcall(function()
                     if part and part.Parent then
                         part:Destroy()
@@ -14408,7 +14418,7 @@ do
                 end)
             end
 
-            acc.parts = {}
+            morph.parts = {}
         end
 
         -- game:GetObjects balikin daftar instance. Yang dicari part yang beneran ada
@@ -14441,7 +14451,6 @@ do
                 end
             end
 
-            -- Sebagian aksesori naruh attachment-nya lebih dalam dari Handle-nya.
             if #out == 0 then
                 for _, descendant in ipairs(inst:GetDescendants()) do
                     if descendant:IsA("Attachment") then
@@ -14453,13 +14462,10 @@ do
             return out
         end
 
-        -- Nyari pasangan titik tempel. Urutannya penting:
+        -- Nyari pasangan titik tempel:
         --   1. attachment yang NAMANYA sama di dua sisi (HatAttachment <-> HatAttachment)
-        --      -- ini yang paling bener, karena itemnya emang ditulis buat titik itu
-        --   2. kalau nggak ada yang namanya sama, pakai attachment mana pun milik
-        --      aksesornya + HatAttachment punya kepala
-        --   3. kalau salah satu sisi nggak punya attachment, nil (nanti pakai titik atas
-        --      kepala -- masih kepasang bener, cuma nggak sepresisi attachment)
+        --   2. kalau nggak ada, attachment mana pun milik aksesornya + HatAttachment kepalanya
+        --   3. salah satu sisi nggak punya attachment -> nil (nanti jatuh ke titik atas kepala)
         local function matchAttachments(handle, head)
             local headAtts = attachmentsOf(head)
 
@@ -14488,8 +14494,8 @@ do
             return nil, nil
         end
 
-        local function attach()
-            local char = localPlayer and localPlayer.Character
+        local function attachCrown()
+            local char = character()
             local head = char and char:FindFirstChild("Head")
 
             if not head then
@@ -14497,9 +14503,8 @@ do
                 return false
             end
 
-            -- Selalu lepas dulu: tanpa ini, mencet Pasang dua kali ninggalin dua mesh
-            -- numpuk di kepala yang sama.
-            detach()
+            -- Selalu lepas dulu: tanpa ini, nyalain dua kali ninggalin dua mesh numpuk.
+            detachCrown()
 
             local objects
             local ok = pcall(function()
@@ -14539,61 +14544,152 @@ do
                 weld.C0 = headAtt.CFrame
                 weld.C1 = att.CFrame
             else
-                -- Nggak ada attachment di salah satu sisi (rig custom / mesh lepas):
-                -- tempel di titik atas kepala. Tetap sekali klik, tetep nggak diatur.
                 weld.C0 = CFrame.new(0, head.Size.Y * 0.5, 0)
                 weld.C1 = CFrame.new(0, 0, 0)
             end
 
             weld.Parent = part
 
-            table.insert(acc.parts, part)
+            table.insert(morph.parts, part)
             return true
         end
 
-        local function apply(announce)
-            if attach() then
-                if announce then
-                    say("aksesori kepasang", 2)
-                end
+        -- ---------- Headless ----------
 
-                return true
+        -- Muka itu Decal, dan Transparency-nya SENDIRI -- nggak ikut ke-hide pas kepala
+        -- dibikin transparan. Kalau nggak diikutin, yang ilang cuma kepalanya, mukanya
+        -- ketinggalan ngambang.
+        local function applyHeadless(on)
+            local char = character()
+            local head = char and char:FindFirstChild("Head")
+
+            if not head then
+                return false
             end
 
-            return false
+            setTransparency(head, on and 1 or 0)
+
+            for _, name in ipairs({ "face", "Face" }) do
+                local face = head:FindFirstChild(name)
+
+                if face then
+                    setTransparency(face, on and 1 or 0)
+                end
+            end
+
+            return true
         end
 
-        local accSection = M_Page:CreateSection("Aksesori Tempel", "shirt")
-        StickAccCard = accSection
+        -- ---------- Korblox (kaki kanan) ----------
 
-        -- CUMA SATU kontrol -- persis prinsip Korless, tinggal apply.
-        --   ON  = kepasang sekarang, dan kepasang ulang otomatis tiap respawn
-        --   OFF = dilepas
-        -- Nggak ada pilihan item, nggak ada slider geser, nggak ada yang perlu diatur.
-        StickAccToggle = accSection:AddToggle("Pasang 8-Bit Royal Crown", false, function(enabled)
-            acc.Enabled = enabled
+        -- R6 cuma punya satu part "Right Leg"; R15 dipecah jadi tiga. Dua-duanya dicek.
+        local RIGHT_LEG = { "Right Leg", "RightUpperLeg", "RightLowerLeg", "RightFoot" }
 
-            if enabled then
-                apply(true)
+        local function applyKorblox(on)
+            local char = character()
 
-                -- Re-apply tiap respawn: instance di client ilang tiap karakter baru
-                -- dibikin, jadi harus dipasang ulang.
-                if not acc.conn then
-                    acc.conn = localPlayer.CharacterAdded:Connect(function()
-                        task.wait(1)
+            if not char then
+                return false
+            end
 
-                        if acc.Enabled then
-                            apply(false)
-                        end
-                    end)
+            local found = false
+
+            for _, name in ipairs(RIGHT_LEG) do
+                local part = char:FindFirstChild(name)
+
+                if part then
+                    found = true
+                    setTransparency(part, on and 1 or 0)
+                end
+            end
+
+            return found
+        end
+
+        -- ---------- bareng ----------
+
+        local function applyAll(announce)
+            if morph.Crown then
+                attachCrown()
+            end
+
+            if morph.Headless then
+                applyHeadless(true)
+            end
+
+            if morph.Korblox then
+                applyKorblox(true)
+            end
+
+            if announce then
+                say("morph diterapin", 2)
+            end
+        end
+
+        local function ensureConn()
+            if morph.conn then
+                return
+            end
+
+            -- Instance di client ilang tiap karakter baru dibikin, jadi semua yang lagi
+            -- nyala harus dipasang ulang -- satu koneksi buat semuanya.
+            morph.conn = localPlayer.CharacterAdded:Connect(function()
+                task.wait(1)
+                applyAll(false)
+            end)
+        end
+
+        -- ---------- UI ----------
+
+        local morphSection = M_Page:CreateSection("Morph & Aksesori", "shirt")
+        MorphCard = morphSection
+
+        MorphCrownToggle = morphSection:AddToggle("8-Bit Royal Crown", false, function(on)
+            morph.Crown = on
+
+            if on then
+                ensureConn()
+
+                if attachCrown() then
+                    say("8-Bit Royal Crown kepasang", 2)
                 end
             else
-                detach()
+                detachCrown()
                 say("crown dilepas")
             end
         end, { Flag = "StickAccAuto" })
 
-        StickAccToggle:AddKeyPicker("None")
+        MorphCrownToggle:AddKeyPicker("None")
+
+        MorphHeadlessToggle = morphSection:AddToggle("Headless (kepala hilang)", false, function(on)
+            morph.Headless = on
+
+            if on then
+                ensureConn()
+            end
+
+            if applyHeadless(on) then
+                say(on and "headless ON" or "headless OFF")
+            end
+        end, { Flag = "MorphHeadless" })
+
+        MorphHeadlessToggle:AddKeyPicker("None")
+
+        MorphKorbloxToggle = morphSection:AddToggle("Korblox (kaki kanan hilang)", false, function(on)
+            morph.Korblox = on
+
+            if on then
+                ensureConn()
+            end
+
+            if applyKorblox(on) then
+                say(on and "korblox ON" or "korblox OFF")
+            else
+                say("kaki kanannya nggak ketemu di rig ini", 3)
+            end
+        end, { Flag = "MorphKorblox" })
+
+        MorphKorbloxToggle:AddKeyPicker("None")
     end
 
     local Survivor = v:CreateTab("Survivor", false, false)
