@@ -22,7 +22,7 @@ _G.AerisSessionTimestamp = os.time()
 -- Build tag. Executor sering nge-cache hasil game:HttpGet, jadi gampang ketipu:
 -- script kelihatan "udah di-update" padahal yang jalan masih versi lama. Tag ini
 -- muncul di notifikasi startup, jadi ketahuan versi mana yang beneran jalan.
-local AERIS_BUILD = "vd-2.9"
+local AERIS_BUILD = "vd-2.10"
 
 -- Helper: Get Safe GUI Parent (Executors / CoreGui / PlayerGui)
 local function GetGuiParent()
@@ -16984,6 +16984,7 @@ do
         zeroPass = 0,
         total = 0,
         waitedMatch = false,
+        done = {},
     }
 
     local probe = { running = false }
@@ -17007,7 +17008,10 @@ do
         local out = {}
 
         for _, obj in ipairs(tbl4.Pumpkins) do
-            if obj and obj.Parent then
+            -- Yang udah pernah didatengin di match ini dilewatin. Tanpa ini farm bakal
+            -- balik lagi ke pumpkin yang sama tiap putaran -- kelihatan kayak maju
+            -- padahal muter di tempat, dan itu yang bikin lambat.
+            if obj and obj.Parent and not farm.done[obj] then
                 local part = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
 
                 if part then
@@ -17182,22 +17186,27 @@ do
         -- ~= false, bukan == true: callback toggle nggak jalan saat script load, jadi
         -- _G.Ox.PumpkinPressButton masih nil sampai user nyentuh toggle-nya. Nilai nil
         -- harus dianggap "nyet" biar perilaku default-nya sesuai yang kelihatan di UI.
+        local delay = _G.Ox.PumpkinFarmDelay or 0.15
+
         if _G.Ox.PumpkinPressButton ~= false then
-            for _ = 1, 3 do
+            -- Dua kali cet dengan jeda pendek. Versi sebelumnya 3x + tunggu mendarat
+            -- 0.5s -- itu bikin satu pumpkin makan ~2 detik, kelamaan buat farm yang
+            -- ngejar banyak titik. Kalau ternyata jadi sering meleset, naikin Farm Delay.
+            for _ = 1, 2 do
                 if model.Parent == nil then return true end
 
-                grounded(0.5)
-                waitInteractable(0.4)
+                grounded(0.2)
+                waitInteractable(0.15)
                 fireButton(findActionButton())
 
-                task.wait(_G.Ox.PumpkinFarmDelay or 0.8)
+                task.wait(delay)
             end
 
             return model.Parent == nil
         end
 
         tryInteract(model)
-        task.wait(_G.Ox.PumpkinFarmDelay or 0.8)
+        task.wait(delay)
         return model.Parent == nil
 
     end
@@ -17259,6 +17268,7 @@ do
         farm.taken = 0
         farm.visited = 0
         farm.waitedMatch = false
+        farm.done = {}
 
         task.spawn(function()
             while farm.running and _G.Ox.ScriptAlive do
@@ -17290,6 +17300,10 @@ do
                 -- biar putaran berikutnya yang bangun daftar target.
                 if farm.waitedMatch and matchActive() then
                     farm.waitedMatch = false
+
+                    -- Match baru = pumpkin baru. Daftar 'udah didatengin' direset biar
+                    -- yang respawn di match berikutnya nggak ikut ke-skip.
+                    farm.done = {}
 
                     lib:Notify({
                         Title = "Pumpkin Farm",
@@ -17375,19 +17389,16 @@ do
                     _G.Ox.Teleport.Silent = false
                     touchPart(target.part)
 
-                    -- Percobaan pertama. Kalau model-nya belum lepas, coba sekali lagi --
-                    -- kadang karakter belum settle atau tombolnya belum visible pas dicet.
                     local ok = attemptTake(target.model, target.part)
-
-                    if not ok and target.model.Parent then
-                        touchPart(target.part)
-                        ok = attemptTake(target.model, target.part)
-                    end
 
                     if ok then
                         farm.taken = farm.taken + 1
                         farm.total = (farm.total or 0) + 1
                     end
+
+                    -- Ditandai SEKALI per match, berhasil atau nggak. Ini kunci biar
+                    -- farm nggak balik lagi ke pumpkin yang sama terus-terusan.
+                    farm.done[target.model] = true
                 end
             end
 
@@ -17395,7 +17406,7 @@ do
         end)
     end, { Flag = "FarmPumpkin" })
 
-    farmSection:AddSlider("Farm Delay", 0.2, 3, 0.8, function(sec)
+    farmSection:AddSlider("Farm Delay", 0.05, 2, 0.15, function(sec)
         _G.Ox.PumpkinFarmDelay = sec
     end, { Increment = 0.1, Flag = "FarmPumpkinDelay" })
 
