@@ -14364,7 +14364,7 @@ do
     --
     --   8-Bit Royal Crown  -> aksesori ditempel ke kepala (titik tempel resmi)
     --   Headless           -> kepala ilang (muka-nya juga, kalau nggak dia ketinggalan)
-    --   Korblox            -> kaki kanan ilang
+    --   Korblox            -> kaki kanan di-hide + mesh kaki Korblox nempel di situ
     --
     -- Catatan soal rig: game ini R6 -- Korless bawaan hub juga nyari "Right Leg", bukan
     -- "RightUpperLeg". Daftar nama R15 tetep dicek juga, biar nggak mati kalau rig-nya
@@ -14582,17 +14582,98 @@ do
 
         -- ---------- Korblox (kaki kanan) ----------
 
+        -- Kaki Korblox = kaki asli di-HIDE (part-nya tetep ada, cuma Transparency 1),
+        -- terus ditempel mesh kaki Korblox di titik yang sama. Di-hide doang nggak cukup:
+        -- yang keliatan cuma lubang, nggak ada bentuk kakinya.
+        --
+        -- Mesh + texture-nya sama kayak yang dipake Korless di atas, jadi bentuknya udah
+        -- kebukti. Asset 902843398 namanya "TXT_KorblowSkeletonMage_RightLeg" -- texture
+        -- resmi Roblox buat kaki kanan Korblox.
+        local KORBLOX = {
+            MESH = "rbxassetid://902942096",
+            TEX = "rbxassetid://902843398",
+            SIZE = Vector3.new(0.85, 0.85, 0.85),
+            OFFSET = CFrame.new(0, 0.7, 0),
+            NAME = "KorbloxLeg",
+            WELD = "KorbloxLegWeld",
+        }
+
         -- R6 cuma punya satu part "Right Leg"; R15 dipecah jadi tiga. Dua-duanya dicek.
+        -- Urutannya sekaligus nentuin part mana yang jadi jangkar mesh -- R6 menang.
         local RIGHT_LEG = { "Right Leg", "RightUpperLeg", "RightLowerLeg", "RightFoot" }
 
+        local function detachKorbloxLeg()
+            local char = character()
+
+            if not char then
+                return
+            end
+
+            for _, child in ipairs(char:GetChildren()) do
+                if child.Name == KORBLOX.NAME then
+                    pcall(function()
+                        child:Destroy()
+                    end)
+                end
+            end
+        end
+
+        -- Jangkar = part kaki yang beneran ada di rig. Mesh-nya di-weld ke situ (bukan
+        -- di-anchor) biar ikut gerak sama kakinya. Dipanggil cuma pas nyala, dan selalu
+        -- bersihin yang lama dulu -- jadi nyalain dua kali nggak numpuk mesh.
+        --
+        -- OFFSET-nya angka R6 (dari pivot "Right Leg"). Di rig R15 angkanya warisan,
+        -- tapi tetep lebih bener daripada lubang kosong.
+        local function attachKorbloxLeg(anchor, char)
+            if not anchor or not char then
+                return false
+            end
+
+            detachKorbloxLeg()
+
+            return pcall(function()
+                local mesh = Instance.new("MeshPart")
+                mesh.Name = KORBLOX.NAME
+                mesh.Size = KORBLOX.SIZE
+                mesh.CanCollide = false
+                mesh.MeshId = KORBLOX.MESH
+                mesh.TextureID = KORBLOX.TEX
+                mesh.CFrame = anchor.CFrame * KORBLOX.OFFSET
+
+                local weld = Instance.new("Weld")
+                weld.Name = KORBLOX.WELD
+                weld.Part0 = anchor
+                weld.C0 = KORBLOX.OFFSET
+                weld.Part1 = mesh
+                weld.C1 = CFrame.new()
+                weld.Parent = mesh
+
+                mesh.Parent = char
+            end)
+        end
+
+        -- Balikin ke 0 doang, tanpa nyentuh mesh -- dipake kalau mesh-nya gagal kepasang.
+        local function unhideRightLeg(char)
+            for _, name in ipairs(RIGHT_LEG) do
+                local part = char:FindFirstChild(name)
+
+                if part then
+                    setTransparency(part, 0)
+                end
+            end
+        end
+
+        -- Balikin dua hal: found (kaki-nya ketemu apa nggak), ok (mesh-nya kepasang apa
+        -- nggak). Kalau mesh gagal, kaki aslinya JANGAN ditinggal transparan -- itu persis
+        -- yang bikin kakinya ilang tanpa ada gantinya.
         local function applyKorblox(on)
             local char = character()
 
             if not char then
-                return false
+                return false, false
             end
 
-            local found = false
+            local found, anchor = false, nil
 
             for _, name in ipairs(RIGHT_LEG) do
                 local part = char:FindFirstChild(name)
@@ -14600,10 +14681,28 @@ do
                 if part then
                     found = true
                     setTransparency(part, on and 1 or 0)
+
+                    if on and not anchor then
+                        anchor = part
+                    end
                 end
             end
 
-            return found
+            if not on then
+                detachKorbloxLeg()
+                return found, true
+            end
+
+            if not anchor then
+                return found, true
+            end
+
+            if not attachKorbloxLeg(anchor, char) then
+                unhideRightLeg(char)
+                return found, false
+            end
+
+            return found, true
         end
 
         -- ---------- bareng ----------
@@ -14675,15 +14774,20 @@ do
 
         MorphHeadlessToggle:AddKeyPicker("None")
 
-        MorphKorbloxToggle = morphSection:AddToggle("Korblox (kaki kanan hilang)", false, function(on)
+        MorphKorbloxToggle = morphSection:AddToggle("Korblox (kaki kanan)", false, function(on)
             morph.Korblox = on
 
             if on then
                 ensureConn()
             end
 
-            if applyKorblox(on) then
+            local found, meshOk = applyKorblox(on)
+
+            if found and meshOk then
                 say(on and "korblox ON" or "korblox OFF")
+            elseif found then
+                -- Kaki aslinya udah dibalikin, jadi nggak ada yang ilang -- tinggal bilang.
+                say("mesh korblox gagal kepasang, kaki aslinya dibalikin", 3)
             else
                 say("kaki kanannya nggak ketemu di rig ini", 3)
             end
