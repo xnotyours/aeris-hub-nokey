@@ -22,7 +22,7 @@ _G.AerisSessionTimestamp = os.time()
 -- Build tag. Executor sering nge-cache hasil game:HttpGet, jadi gampang ketipu:
 -- script kelihatan "udah di-update" padahal yang jalan masih versi lama. Tag ini
 -- muncul di notifikasi startup, jadi ketahuan versi mana yang beneran jalan.
-local AERIS_BUILD = "vd-2.15"
+local AERIS_BUILD = "vd-2.16"
 
 -- Helper: Get Safe GUI Parent (Executors / CoreGui / PlayerGui)
 local function GetGuiParent()
@@ -14354,6 +14354,268 @@ do
             Pandu_SetFakeDisplayName(Pandu_CURRENT_AVATAR.name)
         end
     end)
+
+
+    -- ===== AKSESORI TEMPEL (crown dll) =====
+    -- Nempelin aksesori (mahkota, topi, add-on) ke karakter pakai teknik yang sama kayak
+    -- Korless: instance-nya dibikin sendiri di client, terus di-weld ke bagian tubuh.
+    -- Aksesornya NGGAK di-equip lewat sistem game -- game ini nggak nerima item yang
+    -- nggak dimiliki, dan yang kita butuhin cuma tampilannya.
+    --
+    -- Sumber mesh-nya dari game:GetObjects("rbxassetid://<id>"). Jalur itu dipilih karena
+    -- dia bawa sesi login client-nya sendiri. Endpoint HTTPS (assetdelivery) sekarang
+    -- minta auth dan balikin 401, jadi MeshId mentahnya nggak bisa ditarik dari luar game.
+    -- Efek sampingnya bagus: Asset ID apa pun bisa dipakai, nggak cuma yang di-preset.
+    do
+        local acc = {
+            Enabled = false,
+            AssetId = 10159600649,
+            Scale = 1,
+            OffsetX = 0,
+            OffsetY = 0.6,
+            OffsetZ = 0,
+            parts = {},
+            conn = nil,
+        }
+
+        _G.Ox.StickAccessory = acc
+
+        -- Preset + asset id-nya. Semua id di sini diverifikasi lewat API katalog Roblox
+        -- (nama + AssetTypeId=8/Hat), bukan hasil ngarang.
+        -- 10159600649 = "8-Bit Royal Crown" bikinannya Roblox sendiri (limited).
+        local PRESETS = {
+            ["8-Bit Royal Crown (10159600649)"] = 10159600649,
+            ["8 Bit Crown (93016120692476)"] = 93016120692476,
+            ["8 Bit Crown v2 (72901449795575)"] = 72901449795575,
+            ["8-Bit Crown (132040105802466)"] = 132040105802466,
+            ["8-bit crown (117783060492339)"] = 117783060492339,
+            ["8-Bit Crown UGC (122145130681698)"] = 122145130681698,
+        }
+
+        local PRESET_ORDER = {
+            "8-Bit Royal Crown (10159600649)",
+            "8 Bit Crown (93016120692476)",
+            "8 Bit Crown v2 (72901449795575)",
+            "8-Bit Crown (132040105802466)",
+            "8-bit crown (117783060492339)",
+            "8-Bit Crown UGC (122145130681698)",
+        }
+
+        local function say(desc, duration)
+            pcall(function()
+                lib:Notify({
+                    Title = "Aksesori",
+                    Description = desc,
+                    Duration = duration or 2,
+                })
+            end)
+        end
+
+        local function detach()
+            for _, part in ipairs(acc.parts) do
+                pcall(function()
+                    if part and part.Parent then
+                        part:Destroy()
+                    end
+                end)
+            end
+
+            acc.parts = {}
+        end
+
+        -- game:GetObjects balikin daftar instance. Yang dicari part yang beneran ada
+        -- mesh-nya -- bisa langsung (aksesori modern = MeshPart) atau lewat anaknya
+        -- (topi lama: Part + SpecialMesh).
+        local function findHandle(objects)
+            for _, obj in ipairs(objects) do
+                if typeof(obj) == "Instance" then
+                    if obj:IsA("BasePart") then
+                        return obj
+                    end
+
+                    local part = obj:FindFirstChildWhichIsA("BasePart", true)
+
+                    if part then
+                        return part
+                    end
+                end
+            end
+
+            return nil
+        end
+
+        local function attach()
+            local char = localPlayer and localPlayer.Character
+            local head = char and char:FindFirstChild("Head")
+
+            if not head then
+                say("kepala belum ada", 3)
+                return false
+            end
+
+            -- Selalu lepas dulu: tanpa ini, mencet Pasang dua kali ninggalin dua mesh
+            -- numpuk di kepala yang sama.
+            detach()
+
+            local objects
+            local ok = pcall(function()
+                objects = game:GetObjects("rbxassetid://" .. acc.AssetId)
+            end)
+
+            if not ok or type(objects) ~= "table" then
+                say("executor ini nggak nyediain game:GetObjects", 4)
+                return false
+            end
+
+            local source = findHandle(objects)
+
+            if not source then
+                say("mesh nggak ketemu di asset itu", 4)
+                return false
+            end
+
+            local part = source:Clone()
+            part.Name = "StickAcc"
+            part.CanCollide = false
+            part.Massless = true
+            part.Anchored = false
+
+            -- Skala: MeshPart dari Size, Part + SpecialMesh dari mesh.Scale.
+            if part:IsA("MeshPart") then
+                part.Size = part.Size * acc.Scale
+            else
+                local mesh = part:FindFirstChildWhichIsA("DataModelMesh", true)
+
+                if mesh then
+                    mesh.Scale = mesh.Scale * acc.Scale
+                end
+            end
+
+            part.Parent = char
+
+            -- Kepala itu titik acuannya, dan HalfSize dipakai biar Geser Y 0 nempel di
+            -- ATAS kepala -- bukan di tengah batang leher.
+            part.CFrame = head.CFrame * CFrame.new(
+                acc.OffsetX,
+                head.Size.Y * 0.5 + acc.OffsetY,
+                acc.OffsetZ
+            )
+
+            local weld = Instance.new("WeldConstraint")
+            weld.Part0 = head
+            weld.Part1 = part
+            weld.Parent = part
+
+            table.insert(acc.parts, part)
+            return true
+        end
+
+        local function apply(announce)
+            if attach() then
+                if announce then
+                    say("aksesori kepasang", 2)
+                end
+
+                return true
+            end
+
+            return false
+        end
+
+        -- Dipakai semua slider + preset + textbox. Kalau cuma lihat acc.Enabled,
+        -- aksesori yang dipasang manual lewat "Pasang Sekarang" (toggle OFF) nggak ikut
+        -- ke-update pas slider digeser -- kelihatan kayak slider-nya nggak ngefek.
+        local function refresh()
+            if acc.Enabled or #acc.parts > 0 then
+                apply(false)
+            end
+        end
+
+        local accSection = M_Page:CreateSection("Aksesori Tempel", "shirt")
+        StickAccCard = accSection
+
+        StickAccToggle = accSection:AddToggle("Auto Pasang (Respawn)", false, function(enabled)
+            acc.Enabled = enabled
+
+            if enabled then
+                apply(true)
+
+                -- Re-apply tiap respawn kayak Korless: instance di client ilang tiap
+                -- karakter baru dibikin, jadi harus dipasang ulang.
+                if not acc.conn then
+                    acc.conn = localPlayer.CharacterAdded:Connect(function()
+                        task.wait(1)
+
+                        if acc.Enabled then
+                            apply(false)
+                        end
+                    end)
+                end
+            else
+                detach()
+                say("aksesori dilepas")
+            end
+        end, { Flag = "StickAccAuto" })
+
+        StickAccToggle:AddKeyPicker("None")
+
+        accSection:AddDropdown("Preset", PRESET_ORDER, PRESET_ORDER[1], function(name)
+            local id = PRESETS[name]
+
+            if id then
+                acc.AssetId = id
+                refresh()
+            end
+        end)
+
+        -- Textbox nerima Asset ID mentah ATAU link katalog -- digit pertama di string
+        -- itu id-nya, jadi "https://www.roblox.com/catalog/10159600649/..." langsung
+        -- kepakai tanpa dipotong manual.
+        accSection:AddTextbox("Asset ID / Link", "10159600649 atau link katalog...", function(text)
+            local id = tostring(text or ""):match("(%d+)")
+
+            if not id then
+                say("ID-nya nggak kebaca", 3)
+                return
+            end
+
+            acc.AssetId = tonumber(id)
+            refresh()
+        end)
+
+        accSection:AddSlider("Skala", 0.1, 5, 1, function(value)
+            acc.Scale = value
+            refresh()
+        end, { Increment = 0.05, Flag = "StickAccScale" })
+
+        accSection:AddSlider("Geser X", -3, 3, 0, function(studs)
+            acc.OffsetX = studs
+            refresh()
+        end, { Increment = 0.05, Flag = "StickAccX" })
+
+        accSection:AddSlider("Geser Y", -3, 3, 0.6, function(studs)
+            acc.OffsetY = studs
+            refresh()
+        end, { Increment = 0.05, Flag = "StickAccY" })
+
+        accSection:AddSlider("Geser Z", -3, 3, 0, function(studs)
+            acc.OffsetZ = studs
+            refresh()
+        end, { Increment = 0.05, Flag = "StickAccZ" })
+
+        accSection:AddButton("Pasang Sekarang", function()
+            apply(true)
+        end)
+
+        accSection:AddButton("Lepas", function()
+            if StickAccToggle and StickAccToggle:GetValue() then
+                StickAccToggle:SetValue(false)
+            end
+
+            detach()
+            say("aksesori dilepas")
+        end)
+    end
 
     local Survivor = v:CreateTab("Survivor", false, false)
     SurvivorTab = Survivor
