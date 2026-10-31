@@ -22,7 +22,7 @@ _G.AerisSessionTimestamp = os.time()
 -- Build tag. Executor sering nge-cache hasil game:HttpGet, jadi gampang ketipu:
 -- script kelihatan "udah di-update" padahal yang jalan masih versi lama. Tag ini
 -- muncul di notifikasi startup, jadi ketahuan versi mana yang beneran jalan.
-local AERIS_BUILD = "vd-2.10"
+local AERIS_BUILD = "vd-2.11"
 
 -- Helper: Get Safe GUI Parent (Executors / CoreGui / PlayerGui)
 local function GetGuiParent()
@@ -17186,17 +17186,17 @@ do
         -- ~= false, bukan == true: callback toggle nggak jalan saat script load, jadi
         -- _G.Ox.PumpkinPressButton masih nil sampai user nyentuh toggle-nya. Nilai nil
         -- harus dianggap "nyet" biar perilaku default-nya sesuai yang kelihatan di UI.
-        local delay = _G.Ox.PumpkinFarmDelay or 0.15
+        local delay = _G.Ox.PumpkinFarmDelay or 0.5
 
         if _G.Ox.PumpkinPressButton ~= false then
-            -- Dua kali cet dengan jeda pendek. Versi sebelumnya 3x + tunggu mendarat
-            -- 0.5s -- itu bikin satu pumpkin makan ~2 detik, kelamaan buat farm yang
-            -- ngejar banyak titik. Kalau ternyata jadi sering meleset, naikin Farm Delay.
+            -- Dua kali cet. Default delay 0.5s: 0.15s terbukti kekencengan di device
+            -- (teleport-nya nggak sempat mendarat di pumpkin), sementara 0.8s kelamaan.
+            -- 0.5s itu titik tengah -- kalau masih meleset, naikin lagi lewat slider.
             for _ = 1, 2 do
                 if model.Parent == nil then return true end
 
-                grounded(0.2)
-                waitInteractable(0.15)
+                grounded(0.3)
+                waitInteractable(0.25)
                 fireButton(findActionButton())
 
                 task.wait(delay)
@@ -17406,7 +17406,7 @@ do
         end)
     end, { Flag = "FarmPumpkin" })
 
-    farmSection:AddSlider("Farm Delay", 0.05, 2, 0.15, function(sec)
+    farmSection:AddSlider("Farm Delay", 0.05, 2, 0.5, function(sec)
         _G.Ox.PumpkinFarmDelay = sec
     end, { Increment = 0.1, Flag = "FarmPumpkinDelay" })
 
