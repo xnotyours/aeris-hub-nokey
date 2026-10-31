@@ -22,7 +22,7 @@ _G.AerisSessionTimestamp = os.time()
 -- Build tag. Executor sering nge-cache hasil game:HttpGet, jadi gampang ketipu:
 -- script kelihatan "udah di-update" padahal yang jalan masih versi lama. Tag ini
 -- muncul di notifikasi startup, jadi ketahuan versi mana yang beneran jalan.
-local AERIS_BUILD = "vd-2.11"
+local AERIS_BUILD = "vd-2.12"
 
 -- Helper: Get Safe GUI Parent (Executors / CoreGui / PlayerGui)
 local function GetGuiParent()
@@ -17189,26 +17189,64 @@ do
         local delay = _G.Ox.PumpkinFarmDelay or 0.5
 
         if _G.Ox.PumpkinPressButton ~= false then
-            -- Dua kali cet. Default delay 0.5s: 0.15s terbukti kekencengan di device
-            -- (teleport-nya nggak sempat mendarat di pumpkin), sementara 0.8s kelamaan.
-            -- 0.5s itu titik tengah -- kalau masih meleset, naikin lagi lewat slider.
+            -- Gerbang pertama: karakter HARUS udah deket pumpkin-nya. Sebelum ini ada,
+            -- tombolnya dicet dari jauh dan nggak ada yang keambil -- dan nggak ada
+            -- tanda apa-apa kenapa. Sekarang jaraknya yang dicek, bukan lama nunggu.
+            local reached = ensureNear(part, 1.5)
+
+            if not reached then
+                return false, false
+            end
+
             for _ = 1, 2 do
-                if model.Parent == nil then return true end
+                if model.Parent == nil then return true, true end
 
                 grounded(0.3)
-                waitInteractable(0.25)
+                waitInteractable(0.3)
                 fireButton(findActionButton())
 
                 task.wait(delay)
             end
 
-            return model.Parent == nil
+            return model.Parent == nil, true
         end
 
         tryInteract(model)
         task.wait(delay)
-        return model.Parent == nil
+        return model.Parent == nil, true
 
+    end
+
+    -- Jarak karakter ke pumpkin. Ini yang dipakai buat mastiin TP-nya beneran nyampe
+    -- sebelum tombol dicet -- keluhan "teleport-nya nggak sampe ke pumpkin" itu persis
+    -- kasus ini: tombolnya dicet dari jauh, jadi ya nggak ada yang keambil.
+    local function distanceTo(part)
+        local char = localPlayer.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+
+        if not hrp or not part or not part.Parent then return nil end
+        return (hrp.Position - part.Position).Magnitude
+    end
+
+    -- Tempel karakter ke pumpkin sampai beneran deket -- jangan cuma nunggu pakai timer.
+    -- Kalau server narik balik posisinya, CFrame-nya ditempel ulang terus sampai nyampe;
+    -- yang dijaga jaraknya, bukan lamanya nunggu.
+    local function ensureNear(part, timeout)
+        local radius = _G.Ox.PumpkinTouchRadius or 5
+        local deadline = tick() + (timeout or 1.5)
+
+        while tick() < deadline do
+            local dist = distanceTo(part)
+
+            if dist and dist <= radius then
+                return true, dist
+            end
+
+            touchPart(part)
+            task.wait(0.05)
+        end
+
+        return false, distanceTo(part)
     end
 
     -- Sinyal match jalan: folder "Map" ada di workspace. Ini bukan tebakan -- script
@@ -17344,8 +17382,8 @@ do
                     if farm.visited > 0 then
                         lib:Notify({
                             Title = "Pumpkin Farm",
-                            Description = string.format("Putaran: %d/%d keambil | total sesi: %d",
-                                farm.taken, farm.visited, farm.total or 0),
+                            Description = string.format("Putaran: %d/%d keambil | total %d | %d nggak nyampe",
+                                farm.taken, farm.visited, farm.total or 0, farm.unreached or 0),
                             Duration = 3,
                         })
 
@@ -17376,6 +17414,7 @@ do
 
                     farm.visited = 0
                     farm.taken = 0
+                    farm.unreached = 0
                 end
 
                 local target = farm.list[farm.index]
@@ -17389,11 +17428,15 @@ do
                     _G.Ox.Teleport.Silent = false
                     touchPart(target.part)
 
-                    local ok = attemptTake(target.model, target.part)
+                    local ok, reached = attemptTake(target.model, target.part)
 
                     if ok then
                         farm.taken = farm.taken + 1
                         farm.total = (farm.total or 0) + 1
+                    elseif reached == false then
+                        -- Dibedain dari 'gagal keambil': yang ini TP-nya nggak nyampe,
+                        -- jadi sebabnya beda dan obatnya beda juga.
+                        farm.unreached = (farm.unreached or 0) + 1
                     end
 
                     -- Ditandai SEKALI per match, berhasil atau nggak. Ini kunci biar
@@ -17416,6 +17459,12 @@ do
     farmSection:AddSlider("Touch Offset", 0, 5, 0.5, function(studs)
         _G.Ox.PumpkinTouchOffset = studs
     end, { Increment = 0.1, Flag = "PumpkinTouchOffset" })
+
+    -- Seberapa deket yang dianggap "udah nyampe". Farm nggak akan nyet tombol sebelum
+    -- jaraknya masuk radius ini. Kalau TP-nya sering ketahan server, naikin dikit.
+    farmSection:AddSlider("Touch Radius", 1, 20, 5, function(studs)
+        _G.Ox.PumpkinTouchRadius = studs
+    end, { Increment = 1, Flag = "PumpkinTouchRadius" })
 
     -- Default ON: begitu diaktifin, farm-nya nunggu sampai match beneran jalan
     -- (folder Map ke-load) baru mulai TP. Di lobby / intermission dia cuma diam.
